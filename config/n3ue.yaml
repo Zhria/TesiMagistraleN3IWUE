@@ -3,7 +3,7 @@ info:
     description: Non-3GPP UE configuration
 configuration:
     N3IWFInformation:
-        IPSecIfaceAddr: 10.0.1.1 # IP address of Nwu interface (IKE) on N3IWF
+        IPSecIfaceAddr: 192.168.10.254 #192.168.10.1 # IP address of Nwu interface (IKE) on N3IWF - Indirizzo del gateway, cioè la scheda di rete da AP, presente nel edge161
         IPsecInnerAddr: 10.0.0.1 # IP address of IPsec tunnel enpoint on N3IWF
     N3UEInformation:
         VisitedPLMN: # Optional
@@ -15,8 +15,8 @@ configuration:
                 MNC: 93 # Mobile Network Code (2 or 3 digits string, digit: 0~9)
             MSIN: 0000001234 # Mobile Subscriber Identification Number (max 9 or 10 digits string, digit: 0~9)
         AMFID: cafe00 # For AMF identifier of GUAMI in AP-Parameter (hex string, 3 octets)
-        IPSecIfaceName: ens38 # Name of Nwu interface (IKE) on this N3UE
-        IPSecIfaceAddr: 10.0.1.4 # IP address of Nwu interface (IKE) on this N3UE
+        IPSecIfaceName: wlp44s0 # Name of Nwu interface (IKE) on this N3UE - Interfaccia di collegamento al core 5g via N3IWF
+        IPSecIfaceAddr: 192.168.10.114 # IP address of Nwu interface (IKE) on this N3UE - Indirizzo statico del client su rete.
         DnIPAddr: # IP address of domain network on this N3UE
         XfrmiId: 1 # Default XFRM interface if_id for routing, if_id of additional xfrmi will accumulate
         XfrmiName: ipsec # prefix of XFRM interface created
@@ -42,11 +42,11 @@ configuration:
         Security:
             K: b73a90cbcf3afb622dba83c58a8415df
             RAND: b120f1c1a0102a2f507dd543de68281f
-            SQN: 16f3b3f71005
+            SQN: 16f3b3f71092
             AMF: 8000
             OP: b672047e003bb952dca6cb8af0e5b779
             OPC: df0c67868fa25f748b7044c6e7c245b8
 logger:
     N3UE: # the kind of log output
         debugLevel: trace # how detailed to output, value: trace, debug, info, warn, error, fatal, panic
-        ReportCaller: false # enable the caller report or not, value: true or false
+        ReportCaller: true # enable the caller report or not, value: true or false
