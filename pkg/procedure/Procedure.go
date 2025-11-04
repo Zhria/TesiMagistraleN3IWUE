@@ -3,6 +3,7 @@ package procedure
 import (
 	"context"
 	"fmt"
+	"net"
 	"runtime/debug"
 	"sync"
 	"time"
@@ -119,6 +120,8 @@ func (s *Server) handleEvent(evt n3iwue_context.ProcedureEvt) {
 				n3ueSelf.RanUeContext.DLCount.Get())
 			AppLog.Info("Keep connection with N3IWF until receive SIGINT or SIGTERM")
 		}
+	case *n3iwue_context.StartHandoverEvt:
+		s.handleStartHandoverEvt()
 	default:
 		AppLog.Errorf("Unknown procedure event: %+v", evt)
 	}
@@ -199,4 +202,51 @@ func (s *Server) handleDeregistrationCompleteEvt() {
 		// Trigger application graceful shutdown
 		s.TriggerGracefulShutdown("deregistration complete without re-registration")
 	}
+}
+
+func (s *Server) handleStartHandoverEvt() {
+	AppLog.Info("Start handover event received")
+
+	n3ueSelf := s.Context()
+	if n3ueSelf.PendingHandover == nil {
+		AppLog.Warn("No pending handover context available")
+		return
+	}
+
+	if err := s.prepareTargetIKESession(n3ueSelf.PendingHandover); err != nil {
+		AppLog.Errorf("Preparing target IKE session failed: %+v", err)
+		return
+	}
+
+	AppLog.Infof("Triggering IKE re-establishment towards target N3IWF %s",
+		n3ueSelf.PendingHandover.TargetN3iwfIP)
+	s.SendIkeEvt(n3iwue_context.NewStartIkeSaEstablishmentEvt())
+}
+
+func (s *Server) prepareTargetIKESession(ctx *n3iwue_context.HandoverExecutionContext) error {
+	if ctx == nil {
+		return fmt.Errorf("handover execution context is nil")
+	}
+	if ctx.TargetN3iwfIP == nil {
+		return fmt.Errorf("missing target N3IWF IP address")
+	}
+
+	n3ueSelf := s.Context()
+	for _, port := range []int{500, 4500} {
+		udpInfo, ok := n3ueSelf.IKEConnection[port]
+		if !ok || udpInfo == nil || udpInfo.Conn == nil {
+			return fmt.Errorf("IKE connection for port %d not initialized", port)
+		}
+		udpInfo.N3IWFAddr = &net.UDPAddr{
+			IP:   ctx.TargetN3iwfIP,
+			Port: port,
+		}
+	}
+
+	if ctx.Command != nil {
+		n3ueSelf.LastHandoverCommand = ctx.Command
+	}
+
+	n3ueSelf.N3iwfInfo.IPSecIfaceAddr = ctx.TargetN3iwfIP.String()
+	return nil
 }

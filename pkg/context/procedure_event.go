@@ -9,6 +9,7 @@ const (
 	PduSessionEstablished
 	DeregistrationComplete
 	RestartRegistration
+	StartHandoverExecution
 )
 
 var procedureEvtTypeStr = []string{
@@ -18,6 +19,7 @@ var procedureEvtTypeStr = []string{
 	PduSessionEstablished:  "PduSessionEstablished",
 	DeregistrationComplete: "DeregistrationComplete",
 	RestartRegistration:    "RestartRegistration",
+	StartHandoverExecution: "StartHandoverExecution",
 }
 
 func (e ProcedureEventType) String() string {
@@ -89,4 +91,14 @@ func (evt *RestartRegistrationEvt) Type() ProcedureEventType {
 
 func NewRestartRegistrationEvt() *RestartRegistrationEvt {
 	return &RestartRegistrationEvt{}
+}
+
+type StartHandoverEvt struct{}
+
+func (evt *StartHandoverEvt) Type() ProcedureEventType {
+	return StartHandoverExecution
+}
+
+func NewStartHandoverEvt() *StartHandoverEvt {
+	return &StartHandoverEvt{}
 }

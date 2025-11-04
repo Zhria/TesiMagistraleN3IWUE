@@ -69,6 +69,8 @@ type N3UE struct {
 	ContinuousIkeSaInitTimer *time.Timer
 
 	ReRegistrationRequired bool
+	LastHandoverCommand    *HandoverCommandInfo
+	PendingHandover        *HandoverExecutionContext
 }
 
 func N3UESelf() *N3UE {
@@ -130,6 +132,33 @@ type N3IWFRanUe struct {
 	IMSVoiceSupported                int32
 	RRCEstablishmentCause            int16
 	PduSessionReleaseList            ngapType.PDUSessionResourceReleasedListRelRes
+}
+
+type HandoverCommandInfo struct {
+	RawPdu                             []byte
+	AmfUeNgapID                        int64
+	RanUeNgapID                        int64
+	HandoverType                       uint64
+	NasSecurityParameters              []byte
+	PduSessionResourceList             *ngapType.PDUSessionResourceHandoverList
+	PduSessionResourceToReleaseList    *ngapType.PDUSessionResourceToReleaseListHOCmd
+	TargetToSourceTransparentContainer []byte
+	ReceivedAt                         time.Time
+}
+
+type HandoverTunnelInfo struct {
+	PDUSessionID int64
+	TargetIP     net.IP
+	TargetTEID   uint32
+	RawTransfer  []byte
+}
+
+type HandoverExecutionContext struct {
+	Command           *HandoverCommandInfo
+	SourceAmfUeNgapID int64
+	SourceRanUeNgapID int64
+	TargetN3iwfIP     net.IP
+	Tunnels           []HandoverTunnelInfo
 }
 
 // RetransmitTimer represents a simple retransmit timer
