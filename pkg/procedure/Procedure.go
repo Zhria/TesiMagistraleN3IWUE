@@ -14,6 +14,7 @@ import (
 	"github.com/free5gc/n3iwue/internal/logger"
 	n3iwue_context "github.com/free5gc/n3iwue/pkg/context"
 	"github.com/free5gc/n3iwue/pkg/factory"
+	"github.com/free5gc/n3iwue/pkg/ike"
 )
 
 var AppLog *logrus.Entry
@@ -231,15 +232,29 @@ func (s *Server) prepareTargetIKESession(ctx *n3iwue_context.HandoverExecutionCo
 		return fmt.Errorf("missing target N3IWF IP address")
 	}
 
+	targetIP := ctx.TargetN3iwfIP
+	ikePort := ctx.TargetIKEPort
+	if ikePort == 0 {
+		ikePort = ike.DEFAULT_IKE_PORT
+	}
+	nattPort := ctx.TargetNATTPort
+	if nattPort == 0 {
+		nattPort = ike.DEFAULT_NATT_PORT
+	}
+
 	n3ueSelf := s.Context()
-	for _, port := range []int{500, 4500} {
+	for _, port := range []int{ike.DEFAULT_IKE_PORT, ike.DEFAULT_NATT_PORT} {
 		udpInfo, ok := n3ueSelf.IKEConnection[port]
 		if !ok || udpInfo == nil || udpInfo.Conn == nil {
 			return fmt.Errorf("IKE connection for port %d not initialized", port)
 		}
+		targetPort := ikePort
+		if port == ike.DEFAULT_NATT_PORT {
+			targetPort = nattPort
+		}
 		udpInfo.N3IWFAddr = &net.UDPAddr{
-			IP:   ctx.TargetN3iwfIP,
-			Port: port,
+			IP:   targetIP,
+			Port: targetPort,
 		}
 	}
 
@@ -247,6 +262,6 @@ func (s *Server) prepareTargetIKESession(ctx *n3iwue_context.HandoverExecutionCo
 		n3ueSelf.LastHandoverCommand = ctx.Command
 	}
 
-	n3ueSelf.N3iwfInfo.IPSecIfaceAddr = ctx.TargetN3iwfIP.String()
+	n3ueSelf.N3iwfInfo.IPSecIfaceAddr = targetIP.String()
 	return nil
 }

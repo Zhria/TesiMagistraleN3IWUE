@@ -30,6 +30,7 @@ import (
 	"github.com/free5gc/n3iwue/pkg/factory"
 	"github.com/free5gc/n3iwue/pkg/ike/xfrm"
 	"github.com/free5gc/nas"
+	"github.com/free5gc/nas/nasConvert"
 	"github.com/free5gc/nas/nasMessage"
 	"github.com/free5gc/nas/security"
 	"github.com/free5gc/util/ueauth"
@@ -49,6 +50,8 @@ const (
 	EAP_NASSecurityComplete
 	IKEAUTH_Authentication
 )
+
+const targetToSourceNotifyType uint16 = 40960
 
 func (s *Server) handleEvent(ikeEvt context.IkeEvt) {
 	switch t := ikeEvt.(type) {
@@ -942,11 +945,20 @@ func (s *Server) handleInformational(
 	ikeSA := n3ueSelf.N3IWFUe.N3IWFIKESecurityAssociation
 
 	var deletePayload *ike_message.Delete
+	var targetToSourceNotify []byte
 
 	for _, ikePayload := range message.Payloads {
 		switch ikePayload.Type() {
 		case ike_message.TypeD:
 			deletePayload = ikePayload.(*ike_message.Delete)
+		case ike_message.TypeN:
+			notification := ikePayload.(*ike_message.Notification)
+			if notification.ProtocolID == ike_message.TypeNone &&
+				notification.NotifyMessageType == targetToSourceNotifyType {
+				targetToSourceNotify = append([]byte(nil), notification.NotificationData...)
+			} else {
+				ikeLog.Tracef("Received informational notify type[%d]", notification.NotifyMessageType)
+			}
 		default:
 			ikeLog.Warnf("Unhandled Ike payload type[%s] informational message", ikePayload.Type().String())
 		}
@@ -954,14 +966,63 @@ func (s *Server) handleInformational(
 
 	if !message.IsResponse() {
 		ikeSA.ResponderMessageID = message.MessageID
+		if len(targetToSourceNotify) > 0 {
+			if err := s.handleTargetToSourceNotify(targetToSourceNotify); err != nil {
+				ikeLog.Errorf("Handle target-to-source notify failed: %+v", err)
+			}
+		}
 		if deletePayload != nil {
 			// TODO: Handle delete payload
 			ikeLog.Infof("Received delete payload, sending deregistration complete event")
 			s.SendProcedureEvt(context.NewDeregistrationCompleteEvt())
-		} else {
+		} else if len(targetToSourceNotify) == 0 {
 			ikeLog.Tracef("Receive DPD message request")
 		}
 		s.SendN3iwfInformationExchange(n3ueSelf, nil, true, true, message.MessageID)
+	}
+}
+
+func (s *Server) handleTargetToSourceNotify(data []byte) error {
+	ikeLog := logger.IKELog
+
+	container, err := parseTargetToSourceContainer(data)
+	if err != nil {
+		return err
+	}
+
+	execCtx, err := buildHandoverContextFromContainer(container)
+	if err != nil {
+		return err
+	}
+
+	n3ueSelf := s.Context()
+	n3ueSelf.PendingHandover = execCtx
+	s.applyNasHandoverContext(execCtx.Nas)
+
+	ikeLog.Infof("Prepared handover context from target-to-source notify towards %s (%d tunnels)",
+		execCtx.TargetN3iwfIP, len(execCtx.Tunnels))
+
+	s.SendProcedureEvt(context.NewStartHandoverEvt())
+	return nil
+}
+
+func (s *Server) applyNasHandoverContext(nasCtx *context.NasHandoverContext) {
+	if nasCtx == nil {
+		return
+	}
+
+	n3ueSelf := s.Context()
+	n3ueSelf.NasNcc = nasCtx.NCC
+	if len(nasCtx.NH) > 0 {
+		n3ueSelf.NasNh = append([]byte(nil), nasCtx.NH...)
+	}
+
+	if nasCtx.GUTI != "" {
+		guti := nasConvert.GutiToNas(nasCtx.GUTI)
+		n3ueSelf.GUTI = &guti
+		if n3ueSelf.N3IWFRanUe != nil {
+			n3ueSelf.N3IWFRanUe.Guti = nasCtx.GUTI
+		}
 	}
 }
 

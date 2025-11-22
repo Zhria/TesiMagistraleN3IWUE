@@ -58,6 +58,8 @@ type N3UE struct {
 	CreatedIface         []*netlink.Link
 	Kn3iwf               []uint8
 	GUTI                 *nasType.GUTI5G
+	NasNh                []byte
+	NasNcc               uint8
 	IKEConnection        map[int]*UDPSocketInfo
 
 	// Temporary data , used to create GreTunnel
@@ -146,11 +148,20 @@ type HandoverCommandInfo struct {
 	ReceivedAt                         time.Time
 }
 
+type NasHandoverContext struct {
+	NCC  uint8
+	NH   []byte
+	GUTI string
+}
+
 type HandoverTunnelInfo struct {
 	PDUSessionID int64
 	TargetIP     net.IP
 	TargetTEID   uint32
 	RawTransfer  []byte
+	UPFIP        net.IP
+	QFIs         []uint8
+	GTPBindIP    net.IP
 }
 
 type HandoverExecutionContext struct {
@@ -158,6 +169,11 @@ type HandoverExecutionContext struct {
 	SourceAmfUeNgapID int64
 	SourceRanUeNgapID int64
 	TargetN3iwfIP     net.IP
+	TargetN3iwfFQDN   string
+	TargetIKEPort     int
+	TargetNATTPort    int
+	EnableNATT        bool
+	Nas               *NasHandoverContext
 	Tunnels           []HandoverTunnelInfo
 }
 
