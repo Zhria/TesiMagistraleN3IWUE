@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
+	"strconv"
 	"strings"
 
 	n3iwue_context "github.com/free5gc/n3iwue/pkg/context"
@@ -32,11 +33,11 @@ type targetNasInfo struct {
 }
 
 type targetPduSessionRef struct {
-	ID          int    `json:"id"`
-	UPFAddr     string `json:"upfAddr,omitempty"`
-	TEID        uint32 `json:"teid"`
-	QFIList     []int  `json:"qfiList,omitempty"`
-	GTPBindAddr string `json:"gtpBindAddr,omitempty"`
+	ID          int     `json:"id"`
+	UPFAddr     string  `json:"upfAddr,omitempty"`
+	TEID        uint32  `json:"teid"`
+	QFIList     qfiList `json:"qfiList,omitempty"`
+	GTPBindAddr string  `json:"gtpBindAddr,omitempty"`
 }
 
 func parseTargetToSourceContainer(data []byte) (*targetToSourceContainer, error) {
@@ -145,10 +146,7 @@ func buildHandoverTunnel(session targetPduSessionRef, defaultGtpIP net.IP) (*n3i
 		targetIP = upfIP
 	}
 
-	qfis, err := decodeQFIList(session.QFIList)
-	if err != nil {
-		return nil, err
-	}
+	qfis := decodeQFIList(session.QFIList)
 
 	tunnel := &n3iwue_context.HandoverTunnelInfo{
 		PDUSessionID: int64(session.ID),
@@ -161,15 +159,103 @@ func buildHandoverTunnel(session targetPduSessionRef, defaultGtpIP net.IP) (*n3i
 	return tunnel, nil
 }
 
-func decodeQFIList(rawList []int) ([]uint8, error) {
-	qfis := make([]uint8, 0, len(rawList))
-	for _, v := range rawList {
-		if v < 0 || v > 255 {
-			return nil, fmt.Errorf("invalid QFI value %d", v)
-		}
-		qfis = append(qfis, uint8(v))
+func decodeQFIList(rawList qfiList) []uint8 {
+	return append([]uint8(nil), rawList...)
+}
+
+// qfiList is a tolerant decoder that accepts:
+// - JSON array of numbers: [5,9]
+// - single number: 5
+// - base64 string (default []byte JSON encoding): "AQI="
+// - comma-separated string: "5,9"
+// - string wrapping a JSON array: "[5,9]"
+type qfiList []uint8
+
+func (q *qfiList) UnmarshalJSON(b []byte) error {
+	if len(b) == 0 {
+		return nil
 	}
-	return qfis, nil
+
+	// Try array of uint8
+	var arr8 []uint8
+	if err := json.Unmarshal(b, &arr8); err == nil {
+		*q = arr8
+		return nil
+	}
+
+	// Try array of int
+	var arrInt []int
+	if err := json.Unmarshal(b, &arrInt); err == nil {
+		for _, v := range arrInt {
+			if v < 0 || v > 255 {
+				return fmt.Errorf("invalid QFI value %d", v)
+			}
+			arr8 = append(arr8, uint8(v))
+		}
+		*q = arr8
+		return nil
+	}
+
+	// Try single uint8
+	var single8 uint8
+	if err := json.Unmarshal(b, &single8); err == nil {
+		*q = []uint8{single8}
+		return nil
+	}
+
+	// Try single int
+	var singleInt int
+	if err := json.Unmarshal(b, &singleInt); err == nil {
+		if singleInt < 0 || singleInt > 255 {
+			return fmt.Errorf("invalid QFI value %d", singleInt)
+		}
+		*q = []uint8{uint8(singleInt)}
+		return nil
+	}
+
+	// Try string forms
+	var s string
+	if err := json.Unmarshal(b, &s); err == nil {
+		s = strings.TrimSpace(s)
+		if s == "" {
+			return nil
+		}
+
+		// Base64 decode
+		if decoded, err := base64.StdEncoding.DecodeString(s); err == nil {
+			*q = append([]uint8(nil), decoded...)
+			return nil
+		}
+
+		if strings.HasPrefix(s, "[") {
+			var embedded []uint8
+			if err := json.Unmarshal([]byte(s), &embedded); err == nil {
+				*q = embedded
+				return nil
+			}
+		}
+
+		parts := strings.Split(s, ",")
+		var out []uint8
+		for _, p := range parts {
+			p = strings.TrimSpace(p)
+			if p == "" {
+				continue
+			}
+			v, err := strconv.Atoi(p)
+			if err != nil {
+				return fmt.Errorf("invalid QFI string %q: %w", s, err)
+			}
+			if v < 0 || v > 255 {
+				return fmt.Errorf("invalid QFI value %d", v)
+			}
+			out = append(out, uint8(v))
+		}
+		*q = out
+		return nil
+	}
+
+	return fmt.Errorf("unsupported QFI format: %s", string(b))
 }
 
 func resolveTargetIP(ipStr, fqdn string) (net.IP, error) {
