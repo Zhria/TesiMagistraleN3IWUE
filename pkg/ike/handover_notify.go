@@ -19,6 +19,7 @@ type targetToSourceContainer struct {
 
 type targetAccessInfo struct {
 	N3iwfIP      string `json:"n3iwfIp"`
+	N3iwfBindIP  string `json:"n3iwfBindIp,omitempty"`
 	FQDN         string `json:"fqdn,omitempty"`
 	IKEPort      int    `json:"ikePort"`
 	NATTPort     int    `json:"nattPort"`
@@ -56,7 +57,7 @@ func buildHandoverContextFromContainer(container *targetToSourceContainer) (*n3i
 		return nil, fmt.Errorf("container is nil")
 	}
 
-	targetIP, err := resolveTargetIP(container.Access.N3iwfIP, container.Access.FQDN)
+	targetIP, err := resolveTargetIP(container.Access.N3iwfBindIP, container.Access.N3iwfIP, container.Access.FQDN)
 	if err != nil {
 		return nil, err
 	}
@@ -258,13 +259,16 @@ func (q *qfiList) UnmarshalJSON(b []byte) error {
 	return fmt.Errorf("unsupported QFI format: %s", string(b))
 }
 
-func resolveTargetIP(ipStr, fqdn string) (net.IP, error) {
+func resolveTargetIP(bindIP, ipStr, fqdn string) (net.IP, error) {
+	if ip := parseOptionalIP(bindIP); ip != nil {
+		return ip, nil
+	}
 	if ip := parseOptionalIP(ipStr); ip != nil {
 		return ip, nil
 	}
 
 	if fqdn == "" {
-		return nil, fmt.Errorf("missing both target IP and FQDN")
+		return nil, fmt.Errorf("missing target IP/bind IP/FQDN")
 	}
 
 	ips, err := net.LookupIP(fqdn)
