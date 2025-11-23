@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
-	"strconv"
 	"strings"
 
 	n3iwue_context "github.com/free5gc/n3iwue/pkg/context"
@@ -33,11 +32,11 @@ type targetNasInfo struct {
 }
 
 type targetPduSessionRef struct {
-	ID          int               `json:"id"`
-	UPFAddr     string            `json:"upfAddr,omitempty"`
-	TEID        uint32            `json:"teid"`
-	QFIList     []json.RawMessage `json:"qfiList,omitempty"`
-	GTPBindAddr string            `json:"gtpBindAddr,omitempty"`
+	ID          int    `json:"id"`
+	UPFAddr     string `json:"upfAddr,omitempty"`
+	TEID        uint32 `json:"teid"`
+	QFIList     []int  `json:"qfiList,omitempty"`
+	GTPBindAddr string `json:"gtpBindAddr,omitempty"`
 }
 
 func parseTargetToSourceContainer(data []byte) (*targetToSourceContainer, error) {
@@ -162,45 +161,15 @@ func buildHandoverTunnel(session targetPduSessionRef, defaultGtpIP net.IP) (*n3i
 	return tunnel, nil
 }
 
-func decodeQFIList(rawList []json.RawMessage) ([]uint8, error) {
+func decodeQFIList(rawList []int) ([]uint8, error) {
 	qfis := make([]uint8, 0, len(rawList))
-	for _, raw := range rawList {
-		qfi, err := decodeSingleQFI(raw)
-		if err != nil {
-			return nil, err
+	for _, v := range rawList {
+		if v < 0 || v > 255 {
+			return nil, fmt.Errorf("invalid QFI value %d", v)
 		}
-		qfis = append(qfis, qfi)
+		qfis = append(qfis, uint8(v))
 	}
 	return qfis, nil
-}
-
-func decodeSingleQFI(raw json.RawMessage) (uint8, error) {
-	var asUint uint8
-	if err := json.Unmarshal(raw, &asUint); err == nil {
-		return asUint, nil
-	}
-
-	var asUint64 uint64
-	if err := json.Unmarshal(raw, &asUint64); err == nil {
-		if asUint64 > 255 {
-			return 0, fmt.Errorf("invalid QFI value %d", asUint64)
-		}
-		return uint8(asUint64), nil
-	}
-
-	var asString string
-	if err := json.Unmarshal(raw, &asString); err == nil {
-		value, err := strconv.Atoi(strings.TrimSpace(asString))
-		if err != nil {
-			return 0, fmt.Errorf("invalid QFI string %q", asString)
-		}
-		if value < 0 || value > 255 {
-			return 0, fmt.Errorf("invalid QFI value %d", value)
-		}
-		return uint8(value), nil
-	}
-
-	return 0, fmt.Errorf("unsupported QFI format: %s", string(raw))
 }
 
 func resolveTargetIP(ipStr, fqdn string) (net.IP, error) {

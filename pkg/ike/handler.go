@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/sha1"
 	"encoding/binary"
+	"encoding/json"
 	"fmt"
 	"math/big"
 	"net"
@@ -985,9 +986,16 @@ func (s *Server) handleInformational(
 func (s *Server) handleTargetToSourceNotify(data []byte) error {
 	ikeLog := logger.IKELog
 
+	ikeLog.Infof("Target-to-source notify payload (len=%d): %s", len(data), string(data))
+
 	container, err := parseTargetToSourceContainer(data)
 	if err != nil {
 		return err
+	}
+	if dump, err := json.Marshal(container); err == nil {
+		ikeLog.Infof("Target-to-source notify parsed: %s", string(dump))
+	} else {
+		ikeLog.Infof("Target-to-source notify parsed (marshal err=%v): %+v", err, container)
 	}
 
 	execCtx, err := buildHandoverContextFromContainer(container)
