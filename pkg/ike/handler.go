@@ -14,7 +14,6 @@ import (
 	"github.com/sirupsen/logrus"
 	"golang.org/x/sys/unix"
 
-	"github.com/free5gc/ike/eap"
 	ike_eap "github.com/free5gc/ike/eap"
 	ike_message "github.com/free5gc/ike/message"
 	ike_security "github.com/free5gc/ike/security"
@@ -26,6 +25,7 @@ import (
 	"github.com/free5gc/n3iwue/internal/packet/nasPacket"
 	"github.com/free5gc/n3iwue/internal/packet/ngapPacket"
 	"github.com/free5gc/n3iwue/internal/qos"
+	n3ue_security "github.com/free5gc/n3iwue/internal/security"
 	"github.com/free5gc/n3iwue/internal/util"
 	context "github.com/free5gc/n3iwue/pkg/context"
 	"github.com/free5gc/n3iwue/pkg/factory"
@@ -291,8 +291,22 @@ func (s *Server) handleIKEAUTH(
 		}
 	}
 
+	handoverNAS := isNasHandoverActive(n3ueSelf)
+
+	// In handover mode the target may complete EAP locally and reply with Success
+	if handoverNAS && eapReq != nil && eapReq.Code == ike_eap.EapCodeSuccess {
+		if err := s.respondWithEapSuccess(&ikePayload, ikeSecurityAssociation, ue, n3ueSelf); err != nil {
+			ikeLog.Errorf("HandleIKEAUTH() handover EAP Success: %v", err)
+		}
+		return
+	}
+
 	switch ikeSecurityAssociation.State {
 	case IKEAUTH_Request:
+		if handoverNAS {
+			ikeLog.Infof("Handover NAS context present, skipping Registration NAS exchange")
+			return
+		}
 		eapIdentifier := eapReq.Identifier
 
 		// IKE_AUTH - EAP exchange
@@ -379,7 +393,7 @@ func (s *Server) handleIKEAUTH(
 		}
 
 		// Calculate for RES*
-		if decodedNAS == nil || decodedNAS.GmmMessage == nil {
+		if decodedNAS.GmmMessage == nil {
 			nasLog.Error("decodedNAS is nil")
 			return
 		}
@@ -516,94 +530,13 @@ func (s *Server) handleIKEAUTH(
 
 		ikeSecurityAssociation.State++
 	case EAP_NASSecurityComplete:
-		if eapReq.Code != eap.EapCodeSuccess {
+		if eapReq.Code != ike_eap.EapCodeSuccess {
 			ikeLog.Error("Not Success")
 			return
 		}
-
-		// IKE_AUTH - Authentication
-		ikeSecurityAssociation.InitiatorMessageID++
-
-		// Authentication
-		// Derive Kn3iwf
-		P0 := make([]byte, 4)
-		binary.BigEndian.PutUint32(P0, ue.ULCount.Get()-1)
-		L0 := ueauth.KDFLen(P0)
-		P1 := []byte{security.AccessTypeNon3GPP}
-		L1 := ueauth.KDFLen(P1)
-
-		n3ueSelf.Kn3iwf, err = ueauth.GetKDFValue(
-			ue.Kamf,
-			ueauth.FC_FOR_KGNB_KN3IWF_DERIVATION,
-			P0,
-			L0,
-			P1,
-			L1,
-		)
-		if err != nil {
-			ikeLog.Error("GetKn3iwf error: :", err)
-		}
-
-		var idPayload ike_message.IKEPayloadContainer
-		idPayload.BuildIdentificationInitiator(ike_message.ID_KEY_ID, []byte("UE"))
-		idPayloadData, err := idPayload.Encode()
-		if err != nil {
-			ikeLog.Errorln(err)
-			ikeLog.Error("Encode IKE payload failed.")
-			return
-		}
-		if _, err = ikeSecurityAssociation.Prf_i.Write(idPayloadData[4:]); err != nil {
-			ikeLog.Errorf("Pseudorandom function write error: %+v", err)
-			return
-		}
-		ikeSecurityAssociation.ResponderSignedOctets = append(
-			ikeSecurityAssociation.ResponderSignedOctets,
-			ikeSecurityAssociation.Prf_i.Sum(nil)...)
-
-		pseudorandomFunction := ikeSecurityAssociation.PrfInfo.Init(n3ueSelf.Kn3iwf)
-		if _, err = pseudorandomFunction.Write([]byte("Key Pad for IKEv2")); err != nil {
-			ikeLog.Errorf("Pseudorandom function write error: %+v", err)
-			return
-		}
-		secret := pseudorandomFunction.Sum(nil)
-		pseudorandomFunction = ikeSecurityAssociation.PrfInfo.Init(secret)
-		pseudorandomFunction.Reset()
-		if _, err = pseudorandomFunction.Write(ikeSecurityAssociation.ResponderSignedOctets); err != nil {
-			ikeLog.Errorf("Pseudorandom function write error: %+v", err)
-			return
-		}
-		ikePayload.BuildAuthentication(
-			ike_message.SharedKeyMesageIntegrityCode,
-			pseudorandomFunction.Sum(nil),
-		)
-
-		// Configuration Request
-		configurationRequest := ikePayload.BuildConfiguration(ike_message.CFG_REQUEST)
-		configurationRequest.ConfigurationAttribute.BuildConfigurationAttribute(
-			ike_message.INTERNAL_IP4_ADDRESS,
-			nil,
-		)
-
-		ikeMessage := ike_message.NewMessage(
-			ikeSecurityAssociation.LocalSPI,
-			ikeSecurityAssociation.RemoteSPI,
-			ike_message.IKE_AUTH,
-			false, true,
-			ikeSecurityAssociation.InitiatorMessageID,
-			ikePayload,
-		)
-
-		err = s.SendIkeMsgToN3iwf(
-			n3ueSelf.N3IWFUe.IKEConnection,
-			ikeMessage,
-			ikeSecurityAssociation,
-		)
-		if err != nil {
+		if err := s.respondWithEapSuccess(&ikePayload, ikeSecurityAssociation, ue, n3ueSelf); err != nil {
 			ikeLog.Errorf("HandleIKEAUTH() EAP_NASSecurityComplete: %v", err)
-			return
 		}
-
-		ikeSecurityAssociation.State++
 	case IKEAUTH_Authentication:
 		// Get outbound SPI from proposal provided by N3IWF
 		OutboundSPI := binary.BigEndian.Uint32(
@@ -1032,6 +965,130 @@ func (s *Server) applyNasHandoverContext(nasCtx *context.NasHandoverContext) {
 			n3ueSelf.N3IWFRanUe.Guti = nasCtx.GUTI
 		}
 	}
+}
+
+func isNasHandoverActive(n3ueSelf *context.N3UE) bool {
+	if n3ueSelf == nil {
+		return false
+	}
+	if n3ueSelf.PendingHandover == nil {
+		return false
+	}
+	return len(n3ueSelf.NasNh) > 0
+}
+
+func selectKn3iwfKeyMaterial(n3ueSelf *context.N3UE) ([]byte, string, error) {
+	if n3ueSelf == nil || n3ueSelf.RanUeContext == nil {
+		return nil, "", fmt.Errorf("UE security context unavailable")
+	}
+
+	if len(n3ueSelf.NasNh) > 0 {
+		return n3ueSelf.NasNh, "NH", nil
+	}
+	if len(n3ueSelf.RanUeContext.Kamf) > 0 {
+		return n3ueSelf.RanUeContext.Kamf, "Kamf", nil
+	}
+
+	return nil, "", fmt.Errorf("no key material for KN3IWF derivation")
+}
+
+func (s *Server) respondWithEapSuccess(
+	ikePayload *ike_message.IKEPayloadContainer,
+	ikeSecurityAssociation *context.IKESecurityAssociation,
+	ue *n3ue_security.RanUeContext,
+	n3ueSelf *context.N3UE,
+) error {
+	ikeLog := logger.IKELog
+	if ikePayload == nil || ikeSecurityAssociation == nil || ue == nil || n3ueSelf == nil {
+		return fmt.Errorf("missing context for EAP-Success handling")
+	}
+
+	// IKE_AUTH - Authentication
+	ikeSecurityAssociation.InitiatorMessageID++
+
+	keyMaterial, keyLabel, err := selectKn3iwfKeyMaterial(n3ueSelf)
+	if err != nil {
+		return err
+	}
+
+	ulCount := ue.ULCount.Get()
+	if ulCount > 0 {
+		ulCount--
+	}
+
+	P0 := make([]byte, 4)
+	binary.BigEndian.PutUint32(P0, ulCount)
+	L0 := ueauth.KDFLen(P0)
+	P1 := []byte{security.AccessTypeNon3GPP}
+	L1 := ueauth.KDFLen(P1)
+
+	if n3ueSelf.Kn3iwf, err = ueauth.GetKDFValue(
+		keyMaterial,
+		ueauth.FC_FOR_KGNB_KN3IWF_DERIVATION,
+		P0,
+		L0,
+		P1,
+		L1,
+	); err != nil {
+		return fmt.Errorf("derive KN3IWF from %s: %w", keyLabel, err)
+	}
+
+	ikeLog.Debugf("Derived KN3IWF from %s (ULCount=%d NCC=%d)", keyLabel, ulCount, n3ueSelf.NasNcc)
+
+	var idPayload ike_message.IKEPayloadContainer
+	idPayload.BuildIdentificationInitiator(ike_message.ID_KEY_ID, []byte("UE"))
+	idPayloadData, err := idPayload.Encode()
+	if err != nil {
+		return fmt.Errorf("encode IDi payload: %w", err)
+	}
+	if _, err = ikeSecurityAssociation.Prf_i.Write(idPayloadData[4:]); err != nil {
+		return fmt.Errorf("pseudorandom function write error: %w", err)
+	}
+	ikeSecurityAssociation.ResponderSignedOctets = append(
+		ikeSecurityAssociation.ResponderSignedOctets,
+		ikeSecurityAssociation.Prf_i.Sum(nil)...)
+
+	pseudorandomFunction := ikeSecurityAssociation.PrfInfo.Init(n3ueSelf.Kn3iwf)
+	if _, err = pseudorandomFunction.Write([]byte("Key Pad for IKEv2")); err != nil {
+		return fmt.Errorf("pseudorandom function write error: %w", err)
+	}
+	secret := pseudorandomFunction.Sum(nil)
+	pseudorandomFunction = ikeSecurityAssociation.PrfInfo.Init(secret)
+	pseudorandomFunction.Reset()
+	if _, err = pseudorandomFunction.Write(ikeSecurityAssociation.ResponderSignedOctets); err != nil {
+		return fmt.Errorf("pseudorandom function write error: %w", err)
+	}
+	ikePayload.BuildAuthentication(
+		ike_message.SharedKeyMesageIntegrityCode,
+		pseudorandomFunction.Sum(nil),
+	)
+
+	// Configuration Request
+	configurationRequest := ikePayload.BuildConfiguration(ike_message.CFG_REQUEST)
+	configurationRequest.ConfigurationAttribute.BuildConfigurationAttribute(
+		ike_message.INTERNAL_IP4_ADDRESS,
+		nil,
+	)
+
+	ikeMessage := ike_message.NewMessage(
+		ikeSecurityAssociation.LocalSPI,
+		ikeSecurityAssociation.RemoteSPI,
+		ike_message.IKE_AUTH,
+		false, true,
+		ikeSecurityAssociation.InitiatorMessageID,
+		*ikePayload,
+	)
+
+	if err = s.SendIkeMsgToN3iwf(
+		n3ueSelf.N3IWFUe.IKEConnection,
+		ikeMessage,
+		ikeSecurityAssociation,
+	); err != nil {
+		return fmt.Errorf("send IKE_AUTH after EAP success: %w", err)
+	}
+
+	ikeSecurityAssociation.State = IKEAUTH_Authentication
+	return nil
 }
 
 func HandleNATDetect(
