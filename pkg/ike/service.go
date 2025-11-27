@@ -171,6 +171,15 @@ func (s *Server) receiver(localAddr *net.UDPAddr, errChan chan<- error, wg *sync
 			}
 		}
 
+		// Drop packets that do not come from the currently selected N3IWF for this port
+		if connInfo, ok := n3iwueCtx.IKEConnection[port]; ok && connInfo != nil && connInfo.N3IWFAddr != nil {
+			if !connInfo.N3IWFAddr.IP.Equal(remoteAddr.IP) || connInfo.N3IWFAddr.Port != remoteAddr.Port {
+				ikeLog.Warnf("Dropping IKE packet from unexpected peer %s (expected %s) on port %d",
+					remoteAddr.String(), connInfo.N3IWFAddr.String(), port)
+				continue
+			}
+		}
+
 		// Create IKE event and send to dispatcher (no fallback goroutine)
 		socketInfo := &n3iwue_context.UDPSocketInfo{
 			Conn:      udpListener,
