@@ -38,6 +38,7 @@ configuration:
             base: 1
             expireTime: 2s
             maxRetryTimes: 3
+        HandoverFallbackTimeout: 60s # Timeout to revert to source AP/N3IWF if target handover fails
         AutoReRegistration: false # Re-registration after connection is failed between N3UE and N3IWF
         Security:
             K: b73a90cbcf3afb622dba83c58a8415df

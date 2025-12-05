@@ -73,6 +73,10 @@ type N3UE struct {
 	ReRegistrationRequired bool
 	LastHandoverCommand    *HandoverCommandInfo
 	PendingHandover        *HandoverExecutionContext
+	SourceWifiSSID         string
+	SourceWifiIface        string
+	SourceIKEEndpoints     map[int]*net.UDPAddr
+	HandoverFallbackTimer  *time.Timer
 }
 
 func N3UESelf() *N3UE {
@@ -175,6 +179,14 @@ type HandoverExecutionContext struct {
 	EnableNATT        bool
 	Nas               *NasHandoverContext
 	Tunnels           []HandoverTunnelInfo
+	Wifi              *WifiHandoverInfo
+	SourceN3iwfIP     net.IP
+}
+
+type WifiHandoverInfo struct {
+	SSID                 string
+	Password             string
+	AccessPointInterface string
 }
 
 // RetransmitTimer represents a simple retransmit timer

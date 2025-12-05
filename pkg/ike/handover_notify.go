@@ -15,6 +15,7 @@ type targetToSourceContainer struct {
 	Access      targetAccessInfo      `json:"access"`
 	NAS         targetNasInfo         `json:"nas"`
 	PduSessions []targetPduSessionRef `json:"pduSessions"`
+	Wifi        *targetWifiInfo       `json:"wifi,omitempty"`
 }
 
 type targetAccessInfo struct {
@@ -41,6 +42,12 @@ type targetPduSessionRef struct {
 	GTPBindAddr string  `json:"gtpBindAddr,omitempty"`
 }
 
+type targetWifiInfo struct {
+	SSID                 string `json:"ssid,omitempty"`
+	Password             string `json:"password,omitempty"`
+	AccessPointInterface string `json:"accessPointInterface,omitempty"`
+}
+
 func parseTargetToSourceContainer(data []byte) (*targetToSourceContainer, error) {
 	container := new(targetToSourceContainer)
 	if len(data) == 0 {
@@ -55,6 +62,10 @@ func parseTargetToSourceContainer(data []byte) (*targetToSourceContainer, error)
 func buildHandoverContextFromContainer(container *targetToSourceContainer) (*n3iwue_context.HandoverExecutionContext, error) {
 	if container == nil {
 		return nil, fmt.Errorf("container is nil")
+	}
+
+	if container.Wifi == nil {
+		return nil, fmt.Errorf("wifi config missing in target-to-source container")
 	}
 
 	targetIP, err := resolveTargetIP(container.Access.N3iwfBindIP, container.Access.N3iwfIP, container.Access.FQDN)
@@ -85,6 +96,14 @@ func buildHandoverContextFromContainer(container *targetToSourceContainer) (*n3i
 		exec.Nas = nasCtx
 	}
 
+	wifiCtx, err := buildWifiContext(container.Wifi)
+	if err != nil {
+		return nil, err
+	}
+	if wifiCtx != nil {
+		exec.Wifi = wifiCtx
+	}
+
 	defaultGtpIP := parseOptionalIP(container.Access.GTPBindAddr)
 
 	for _, session := range container.PduSessions {
@@ -100,6 +119,23 @@ func buildHandoverContextFromContainer(container *targetToSourceContainer) (*n3i
 	}
 
 	return exec, nil
+}
+
+func buildWifiContext(wifi *targetWifiInfo) (*n3iwue_context.WifiHandoverInfo, error) {
+	if wifi == nil {
+		return nil, fmt.Errorf("wifi config is nil")
+	}
+	if wifi.SSID == "" {
+		return nil, fmt.Errorf("wifi ssid is empty")
+	}
+	if wifi.AccessPointInterface == "" {
+		return nil, fmt.Errorf("wifi accessPointInterface is empty")
+	}
+	return &n3iwue_context.WifiHandoverInfo{
+		SSID:                 wifi.SSID,
+		Password:             wifi.Password,
+		AccessPointInterface: wifi.AccessPointInterface,
+	}, nil
 }
 
 func buildNasContext(nas targetNasInfo) (*n3iwue_context.NasHandoverContext, error) {

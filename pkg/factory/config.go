@@ -136,6 +136,7 @@ type N3UEInfo struct {
 	DpdInterval        time.Duration          `yaml:"DpdInterval" valid:"optional"`
 	IkeRetransmit      *ExponentialTimerValue `yaml:"IkeRetransmit" valid:"required"`
 	AutoReRegistration bool                   `yaml:"AutoReRegistration" valid:"optional"`
+	HandoverFallback   time.Duration          `yaml:"HandoverFallbackTimeout" valid:"optional"`
 }
 
 func (i *N3UEInfo) validate() (bool, error) {

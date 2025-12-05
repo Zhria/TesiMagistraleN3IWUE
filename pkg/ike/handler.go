@@ -53,6 +53,7 @@ const (
 )
 
 const targetToSourceNotifyType uint16 = 40960
+const handoverFailureNotifyType uint16 = 40961
 
 func (s *Server) handleEvent(ikeEvt context.IkeEvt) {
 	switch t := ikeEvt.(type) {
@@ -644,6 +645,7 @@ func (s *Server) handleIKEAUTH(
 
 		s.StartInboundMessageTimer(ikeSecurityAssociation)
 
+		s.cancelHandoverFallbackTimer()
 		s.SendProcedureEvt(context.NewNwucpChildSaCreatedEvt())
 	}
 }
@@ -880,6 +882,7 @@ func (s *Server) handleInformational(
 
 	var deletePayload *ike_message.Delete
 	var targetToSourceNotify []byte
+	var responsePayload *ike_message.IKEPayloadContainer
 
 	for _, ikePayload := range message.Payloads {
 		switch ikePayload.Type() {
@@ -901,8 +904,12 @@ func (s *Server) handleInformational(
 	if !message.IsResponse() {
 		ikeSA.ResponderMessageID = message.MessageID
 		if len(targetToSourceNotify) > 0 {
-			if err := s.handleTargetToSourceNotify(targetToSourceNotify); err != nil {
+			payload, err := s.handleTargetToSourceNotify(targetToSourceNotify)
+			if err != nil {
 				ikeLog.Errorf("Handle target-to-source notify failed: %+v", err)
+			}
+			if payload != nil && len(*payload) > 0 {
+				responsePayload = payload
 			}
 		}
 		if deletePayload != nil {
@@ -912,18 +919,18 @@ func (s *Server) handleInformational(
 		} else if len(targetToSourceNotify) == 0 {
 			ikeLog.Tracef("Receive DPD message request")
 		}
-		s.SendN3iwfInformationExchange(n3ueSelf, nil, true, true, message.MessageID)
+		s.SendN3iwfInformationExchange(n3ueSelf, responsePayload, true, true, message.MessageID)
 	}
 }
 
-func (s *Server) handleTargetToSourceNotify(data []byte) error {
+func (s *Server) handleTargetToSourceNotify(data []byte) (*ike_message.IKEPayloadContainer, error) {
 	ikeLog := logger.IKELog
 
 	ikeLog.Infof("Target-to-source notify payload (len=%d): %s", len(data), string(data))
 
 	container, err := parseTargetToSourceContainer(data)
 	if err != nil {
-		return err
+		return s.buildHandoverFailurePayload("parse_error", err.Error()), err
 	}
 	if dump, err := json.Marshal(container); err == nil {
 		ikeLog.Infof("Target-to-source notify parsed: %s", string(dump))
@@ -933,10 +940,16 @@ func (s *Server) handleTargetToSourceNotify(data []byte) error {
 
 	execCtx, err := buildHandoverContextFromContainer(container)
 	if err != nil {
-		return err
+		return s.buildHandoverFailurePayload("invalid_payload", err.Error()), err
+	}
+
+	if err := s.switchWifiForHandover(execCtx); err != nil {
+		return s.buildHandoverFailurePayload("wifi_switch_failed", err.Error()), err
 	}
 
 	n3ueSelf := s.Context()
+	execCtx.SourceN3iwfIP = cloneIP(net.ParseIP(n3ueSelf.N3iwfInfo.IPSecIfaceAddr))
+	n3ueSelf.SourceIKEEndpoints = snapshotIKEEndpoints(n3ueSelf)
 	n3ueSelf.PendingHandover = execCtx
 	s.applyNasHandoverContext(execCtx.Nas)
 
@@ -944,7 +957,8 @@ func (s *Server) handleTargetToSourceNotify(data []byte) error {
 		execCtx.TargetN3iwfIP, len(execCtx.Tunnels))
 
 	s.SendProcedureEvt(context.NewStartHandoverEvt())
-	return nil
+	s.startHandoverFallbackTimer(execCtx)
+	return nil, nil
 }
 
 func (s *Server) applyNasHandoverContext(nasCtx *context.NasHandoverContext) {
@@ -1260,6 +1274,146 @@ func (s *Server) processRetransmitMsg(
 				ikeSA.InitiatorMessageID, ikeHeader.MessageID)
 		}
 	}
+}
+
+func (s *Server) switchWifiForHandover(ctx *context.HandoverExecutionContext) error {
+	if ctx == nil {
+		return fmt.Errorf("handover context is nil")
+	}
+	if ctx.Wifi == nil {
+		return fmt.Errorf("wifi config missing in handover context")
+	}
+	ueIface := s.Context().N3ueInfo.IPSecIfaceName
+	if ueIface == "" {
+		return fmt.Errorf("UE IPSecIfaceName is empty")
+	}
+	manager := &nmcliWifiManager{}
+	prev, err := manager.Switch(ctx.Wifi, ueIface)
+	if err != nil {
+		return err
+	}
+	s.captureSourceWifi(prev, ueIface)
+	return nil
+}
+
+func (s *Server) buildHandoverFailurePayload(reason, detail string) *ike_message.IKEPayloadContainer {
+	payload := new(ike_message.IKEPayloadContainer)
+	msg := reason
+	if detail != "" {
+		msg = fmt.Sprintf("%s: %s", reason, detail)
+	}
+	payload.BuildNotification(ike_message.TypeNone, handoverFailureNotifyType, nil, []byte(msg))
+	return payload
+}
+
+func (s *Server) captureSourceWifi(prevSSID, iface string) {
+	n3ueSelf := s.Context()
+	if prevSSID != "" {
+		n3ueSelf.SourceWifiSSID = prevSSID
+	}
+	if iface != "" {
+		n3ueSelf.SourceWifiIface = iface
+	}
+}
+
+func snapshotIKEEndpoints(n3ueSelf *context.N3UE) map[int]*net.UDPAddr {
+	out := make(map[int]*net.UDPAddr)
+	if n3ueSelf == nil {
+		return out
+	}
+	for port, info := range n3ueSelf.IKEConnection {
+		if info != nil && info.N3IWFAddr != nil {
+			out[port] = cloneUDPAddr(info.N3IWFAddr)
+		}
+	}
+	return out
+}
+
+func cloneUDPAddr(addr *net.UDPAddr) *net.UDPAddr {
+	if addr == nil {
+		return nil
+	}
+	return &net.UDPAddr{
+		IP:   cloneIP(addr.IP),
+		Port: addr.Port,
+		Zone: addr.Zone,
+	}
+}
+
+func (s *Server) startHandoverFallbackTimer(ctx *context.HandoverExecutionContext) {
+	n3ueSelf := s.Context()
+	if n3ueSelf == nil || ctx == nil {
+		return
+	}
+
+	timeout := s.Config().Configuration.N3UEInfo.HandoverFallback
+	if timeout == 0 {
+		timeout = 60 * time.Second
+	}
+
+	if n3ueSelf.HandoverFallbackTimer != nil {
+		n3ueSelf.HandoverFallbackTimer.Stop()
+	}
+
+	n3ueSelf.HandoverFallbackTimer = time.AfterFunc(timeout, func() {
+		s.fallbackToSource(ctx)
+	})
+}
+
+func (s *Server) cancelHandoverFallbackTimer() {
+	n3ueSelf := s.Context()
+	if n3ueSelf != nil && n3ueSelf.HandoverFallbackTimer != nil {
+		n3ueSelf.HandoverFallbackTimer.Stop()
+		n3ueSelf.HandoverFallbackTimer = nil
+	}
+}
+
+func (s *Server) fallbackToSource(ctx *context.HandoverExecutionContext) {
+	ikeLog := logger.IKELog
+	n3ueSelf := s.Context()
+	if n3ueSelf == nil {
+		return
+	}
+	if n3ueSelf.PendingHandover != ctx {
+		return
+	}
+
+	ikeLog.Warn("Handover fallback timer expired, reverting to source N3IWF and AP")
+
+	s.cancelHandoverFallbackTimer()
+	s.reconnectSourceWifi(n3ueSelf)
+
+	if ctx.SourceN3iwfIP != nil {
+		n3ueSelf.N3iwfInfo.IPSecIfaceAddr = ctx.SourceN3iwfIP.String()
+	}
+
+	for port, addr := range n3ueSelf.SourceIKEEndpoints {
+		if conn, ok := n3ueSelf.IKEConnection[port]; ok && conn != nil {
+			conn.N3IWFAddr = cloneUDPAddr(addr)
+		}
+	}
+
+	n3ueSelf.PendingHandover = nil
+	s.SendIkeEvt(context.NewStartIkeSaEstablishmentEvt())
+}
+
+func (s *Server) reconnectSourceWifi(n3ueSelf *context.N3UE) {
+	if n3ueSelf == nil {
+		return
+	}
+	if n3ueSelf.SourceWifiSSID == "" || n3ueSelf.SourceWifiIface == "" {
+		logger.IKELog.Warn("No source Wi-Fi info to reconnect")
+		return
+	}
+	manager := &nmcliWifiManager{}
+	if _, err := manager.Switch(&context.WifiHandoverInfo{
+		SSID:                 n3ueSelf.SourceWifiSSID,
+		AccessPointInterface: n3ueSelf.SourceWifiIface,
+	}, n3ueSelf.SourceWifiIface); err != nil {
+		logger.IKELog.Warnf("Failed to reconnect source Wi-Fi %q on %s: %v", n3ueSelf.SourceWifiSSID, n3ueSelf.SourceWifiIface, err)
+		return
+	}
+	logger.IKELog.Infof("Reconnected to source Wi-Fi %q on %s", n3ueSelf.SourceWifiSSID, n3ueSelf.SourceWifiIface)
 }
 
 // isRetransmit checks if the packet is a retransmission using Message ID and SHA1 hash comparison
