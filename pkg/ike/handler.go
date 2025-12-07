@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"crypto/sha1"
 	"encoding/binary"
-	"encoding/json"
 	"fmt"
 	"math/big"
 	"net"
@@ -926,22 +925,20 @@ func (s *Server) handleInformational(
 func (s *Server) handleTargetToSourceNotify(data []byte) (*ike_message.IKEPayloadContainer, error) {
 	ikeLog := logger.IKELog
 
-	ikeLog.Infof("Target-to-source notify payload (len=%d): %s", len(data), string(data))
+	ikeLog.Infof("Received target-to-source notify (len=%d bytes)", len(data))
 
 	container, err := parseTargetToSourceContainer(data)
 	if err != nil {
 		return s.buildHandoverFailurePayload("parse_error", err.Error()), err
-	}
-	if dump, err := json.Marshal(container); err == nil {
-		ikeLog.Infof("Target-to-source notify parsed: %s", string(dump))
-	} else {
-		ikeLog.Infof("Target-to-source notify parsed (marshal err=%v): %+v", err, container)
 	}
 
 	execCtx, err := buildHandoverContextFromContainer(container)
 	if err != nil {
 		return s.buildHandoverFailurePayload("invalid_payload", err.Error()), err
 	}
+
+	ikeLog.Infof("Target-to-source notify parsed: targetIP=%s natt=%t tunnels=%d wifi_config=%t",
+		execCtx.TargetN3iwfIP, execCtx.EnableNATT, len(execCtx.Tunnels), execCtx.Wifi != nil)
 
 	if err := s.switchWifiForHandover(execCtx); err != nil {
 		return s.buildHandoverFailurePayload("wifi_switch_failed", err.Error()), err
@@ -1286,6 +1283,9 @@ func (s *Server) switchWifiForHandover(ctx *context.HandoverExecutionContext) er
 	ueIface := s.Context().N3ueInfo.IPSecIfaceName
 	if ueIface == "" {
 		return fmt.Errorf("UE IPSecIfaceName is empty")
+	}
+	if ctx.Wifi.AccessPointInterface != "" && ctx.Wifi.AccessPointInterface != ueIface {
+		logger.IKELog.Infof("Ignoring AccessPointInterface %q, using %q", ctx.Wifi.AccessPointInterface, ueIface)
 	}
 	manager := &nmcliWifiManager{}
 	prev, err := manager.Switch(ctx.Wifi, ueIface)
