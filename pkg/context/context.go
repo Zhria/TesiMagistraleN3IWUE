@@ -184,9 +184,8 @@ type HandoverExecutionContext struct {
 }
 
 type WifiHandoverInfo struct {
-	SSID                 string
-	Password             string
-	AccessPointInterface string
+	SSID     string
+	Password string
 }
 
 // RetransmitTimer represents a simple retransmit timer

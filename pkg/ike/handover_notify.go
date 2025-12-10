@@ -43,9 +43,8 @@ type targetPduSessionRef struct {
 }
 
 type targetWifiInfo struct {
-	SSID                 string `json:"ssid,omitempty"`
-	Password             string `json:"password,omitempty"`
-	AccessPointInterface string `json:"accessPointInterface,omitempty"`
+	SSID     string `json:"ssid,omitempty"`
+	Password string `json:"password,omitempty"`
 }
 
 func parseTargetToSourceContainer(data []byte) (*targetToSourceContainer, error) {
@@ -128,13 +127,9 @@ func buildWifiContext(wifi *targetWifiInfo) (*n3iwue_context.WifiHandoverInfo, e
 	if wifi.SSID == "" {
 		return nil, fmt.Errorf("wifi ssid is empty")
 	}
-	if wifi.AccessPointInterface == "" {
-		return nil, fmt.Errorf("wifi accessPointInterface is empty")
-	}
 	return &n3iwue_context.WifiHandoverInfo{
-		SSID:                 wifi.SSID,
-		Password:             wifi.Password,
-		AccessPointInterface: wifi.AccessPointInterface,
+		SSID:     wifi.SSID,
+		Password: wifi.Password,
 	}, nil
 }
 
