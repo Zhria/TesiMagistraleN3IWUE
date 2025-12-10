@@ -16,7 +16,7 @@ configuration:
             MSIN: 0000001234 # Mobile Subscriber Identification Number (max 9 or 10 digits string, digit: 0~9)
         AMFID: cafe00 # For AMF identifier of GUAMI in AP-Parameter (hex string, 3 octets)
         IPSecIfaceName: wlp44s0 # Name of Nwu interface (IKE) on this N3UE - Interfaccia di collegamento al core 5g via N3IWF
-        IPSecIfaceAddr: 192.168.10.114 # IP address of Nwu interface (IKE) on this N3UE - Indirizzo statico del client su rete.
+        IPSecIfaceAddr: 192.168.10.113 # IP address of Nwu interface (IKE) on this N3UE - Indirizzo statico del client su rete.
         DnIPAddr: # IP address of domain network on this N3UE
         XfrmiId: 1 # Default XFRM interface if_id for routing, if_id of additional xfrmi will accumulate
         XfrmiName: ipsec # prefix of XFRM interface created
