@@ -1284,9 +1284,6 @@ func (s *Server) switchWifiForHandover(ctx *context.HandoverExecutionContext) er
 	if ueIface == "" {
 		return fmt.Errorf("UE IPSecIfaceName is empty")
 	}
-	if ctx.Wifi.AccessPointInterface != "" && ctx.Wifi.AccessPointInterface != ueIface {
-		logger.IKELog.Infof("Ignoring AccessPointInterface %q, using %q", ctx.Wifi.AccessPointInterface, ueIface)
-	}
 	manager := &nmcliWifiManager{}
 	prev, err := manager.Switch(ctx.Wifi, ueIface)
 	if err != nil {
@@ -1407,8 +1404,7 @@ func (s *Server) reconnectSourceWifi(n3ueSelf *context.N3UE) {
 	}
 	manager := &nmcliWifiManager{}
 	if _, err := manager.Switch(&context.WifiHandoverInfo{
-		SSID:                 n3ueSelf.SourceWifiSSID,
-		AccessPointInterface: n3ueSelf.SourceWifiIface,
+		SSID: n3ueSelf.SourceWifiSSID,
 	}, n3ueSelf.SourceWifiIface); err != nil {
 		logger.IKELog.Warnf("Failed to reconnect source Wi-Fi %q on %s: %v", n3ueSelf.SourceWifiSSID, n3ueSelf.SourceWifiIface, err)
 		return

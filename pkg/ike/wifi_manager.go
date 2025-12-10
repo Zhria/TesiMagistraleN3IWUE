@@ -26,9 +26,6 @@ func (m *nmcliWifiManager) Switch(cfg *n3iwue_context.WifiHandoverInfo, scanIfac
 	if scanIface == "" {
 		return "", fmt.Errorf("scan interface is empty")
 	}
-	if cfg.AccessPointInterface != "" && cfg.AccessPointInterface != scanIface {
-		logger.IKELog.Infof("Ignoring AccessPointInterface %q, using %q", cfg.AccessPointInterface, scanIface)
-	}
 
 	if present, err := m.hasSSID(cfg.SSID, scanIface); err != nil {
 		return "", fmt.Errorf("scan wifi: %w", err)
