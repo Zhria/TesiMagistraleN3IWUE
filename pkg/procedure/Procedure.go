@@ -219,6 +219,12 @@ func (s *Server) handleStartHandoverEvt() {
 		return
 	}
 
+	AppLog.Infof("Handover prep: target=%s ikePort=%d nattPort=%d tunnels=%d",
+		n3ueSelf.PendingHandover.TargetN3iwfIP,
+		n3ueSelf.PendingHandover.TargetIKEPort,
+		n3ueSelf.PendingHandover.TargetNATTPort,
+		len(n3ueSelf.PendingHandover.Tunnels))
+
 	if len(n3ueSelf.PendingHandover.Tunnels) > 0 {
 		if err := s.rebuildHandoverTunnels(n3ueSelf.PendingHandover); err != nil {
 			AppLog.Warnf("Updating tunnels for handover failed: %+v", err)

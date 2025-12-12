@@ -872,7 +872,8 @@ func (s *Server) handleInformational(
 	evt *context.HandleIkeMsgInformationalEvt,
 ) {
 	ikeLog := logger.IKELog
-	ikeLog.Infoln("Handle Informational")
+	ikeLog.Infof("Handle Informational: msgID=%d isResponse=%t payloads=%d",
+		evt.IkeMsg.IKEHeader.MessageID, evt.IkeMsg.IsResponse(), len(evt.IkeMsg.Payloads))
 
 	message := evt.IkeMsg
 
@@ -883,17 +884,19 @@ func (s *Server) handleInformational(
 	var targetToSourceNotify []byte
 	var responsePayload *ike_message.IKEPayloadContainer
 
-	for _, ikePayload := range message.Payloads {
+	for idx, ikePayload := range message.Payloads {
 		switch ikePayload.Type() {
 		case ike_message.TypeD:
 			deletePayload = ikePayload.(*ike_message.Delete)
+			ikeLog.Infof("Informational payload[%d]: Delete proto=%d spi=%v", idx, deletePayload.ProtocolID, deletePayload.SPIs)
 		case ike_message.TypeN:
 			notification := ikePayload.(*ike_message.Notification)
 			if notification.ProtocolID == ike_message.TypeNone &&
 				notification.NotifyMessageType == targetToSourceNotifyType {
 				targetToSourceNotify = append([]byte(nil), notification.NotificationData...)
 			} else {
-				ikeLog.Tracef("Received informational notify type[%d]", notification.NotifyMessageType)
+				ikeLog.Infof("Informational payload[%d]: Notify type=%d proto=%d spi=%v dataLen=%d",
+					idx, notification.NotifyMessageType, notification.ProtocolID, notification.SPI, len(notification.NotificationData))
 			}
 		default:
 			ikeLog.Warnf("Unhandled Ike payload type[%s] informational message", ikePayload.Type().String())
@@ -902,6 +905,8 @@ func (s *Server) handleInformational(
 
 	if !message.IsResponse() {
 		ikeSA.ResponderMessageID = message.MessageID
+		ikeLog.Infof("Informational request from %s msgID=%d (responderMsgID now %d)",
+			n3ueSelf.N3iwfInfo.IPSecIfaceAddr, message.MessageID, ikeSA.ResponderMessageID)
 		if len(targetToSourceNotify) > 0 {
 			payload, err := s.handleTargetToSourceNotify(targetToSourceNotify)
 			if err != nil {
@@ -910,6 +915,8 @@ func (s *Server) handleInformational(
 			if payload != nil && len(*payload) > 0 {
 				responsePayload = payload
 			}
+		} else {
+			ikeLog.Trace("No target-to-source notify present in informational")
 		}
 		if deletePayload != nil {
 			// TODO: Handle delete payload
@@ -939,6 +946,11 @@ func (s *Server) handleTargetToSourceNotify(data []byte) (*ike_message.IKEPayloa
 
 	ikeLog.Infof("Target-to-source notify parsed: targetIP=%s natt=%t tunnels=%d wifi_config=%t",
 		execCtx.TargetN3iwfIP, execCtx.EnableNATT, len(execCtx.Tunnels), execCtx.Wifi != nil)
+
+	for i, t := range execCtx.Tunnels {
+		ikeLog.Infof("Handover tunnel[%d]: pduSessionID=%d targetIP=%s targetTEID=%d upfIP=%s gtpBindIP=%s qfi=%v",
+			i, t.PDUSessionID, t.TargetIP, t.TargetTEID, t.UPFIP, t.GTPBindIP, t.QFIs)
+	}
 
 	if err := s.switchWifiForHandover(execCtx); err != nil {
 		return s.buildHandoverFailurePayload("wifi_switch_failed", err.Error()), err

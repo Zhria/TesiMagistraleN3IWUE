@@ -80,6 +80,7 @@ func (s *Server) rebuildHandoverTunnels(ctx *n3iwue_context.HandoverExecutionCon
 
 	for qfi, remote := range tunnelTargets {
 		greName := fmt.Sprintf("%s-%d", greBase, qfi)
+		AppLog.Infof("Handover GRE rebuild: qfi=%d local=%s remote=%s pdu=%s iface=%s", qfi, n3ueSelf.UEInnerAddr.IP, remote, pduAddr, n3ueSelf.TemporaryXfrmiName)
 		link, err := gre.SetupGreTunnel(greName, parentLink, n3ueSelf.UEInnerAddr.IP, remote, pduAddr, qfi)
 		if err != nil {
 			return fmt.Errorf("setup GRE tunnel %s: %w", greName, err)
