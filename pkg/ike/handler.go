@@ -1280,16 +1280,12 @@ func (s *Server) switchWifiForHandover(ctx *context.HandoverExecutionContext) er
 	if ctx.Wifi == nil {
 		return fmt.Errorf("wifi config missing in handover context")
 	}
-	ueIface := s.Context().N3ueInfo.IPSecIfaceName
-	if ueIface == "" {
-		return fmt.Errorf("UE IPSecIfaceName is empty")
-	}
 	manager := &nmcliWifiManager{}
-	prev, err := manager.Switch(ctx.Wifi, ueIface)
+	prev, err := manager.Switch(ctx.Wifi)
 	if err != nil {
 		return err
 	}
-	s.captureSourceWifi(prev, ueIface)
+	s.captureSourceWifi(prev)
 	return nil
 }
 
@@ -1303,13 +1299,10 @@ func (s *Server) buildHandoverFailurePayload(reason, detail string) *ike_message
 	return payload
 }
 
-func (s *Server) captureSourceWifi(prevSSID, iface string) {
+func (s *Server) captureSourceWifi(prevSSID string) {
 	n3ueSelf := s.Context()
 	if prevSSID != "" {
 		n3ueSelf.SourceWifiSSID = prevSSID
-	}
-	if iface != "" {
-		n3ueSelf.SourceWifiIface = iface
 	}
 }
 
@@ -1405,14 +1398,13 @@ func (s *Server) reconnectSourceWifi(n3ueSelf *context.N3UE) {
 	manager := &nmcliWifiManager{}
 	if _, err := manager.Switch(&context.WifiHandoverInfo{
 		SSID: n3ueSelf.SourceWifiSSID,
-	}, n3ueSelf.SourceWifiIface); err != nil {
+	}); err != nil {
 		logger.IKELog.Warnf("Failed to reconnect source Wi-Fi %q on %s: %v", n3ueSelf.SourceWifiSSID, n3ueSelf.SourceWifiIface, err)
 		return
 	}
 	logger.IKELog.Infof("Reconnected to source Wi-Fi %q on %s", n3ueSelf.SourceWifiSSID, n3ueSelf.SourceWifiIface)
 }
 
-// isRetransmit checks if the packet is a retransmission using Message ID and SHA1 hash comparison
 func (s *Server) isRetransmit(
 	ikeSA *context.IKESecurityAssociation,
 	ikeHeader *ike_message.IKEHeader, packet []byte,
