@@ -16,4 +16,5 @@ cscope.*
 log/
 *.log
 *.pcap
+./n3iwue
 n3iwue/config/n3ue.yaml
