@@ -967,6 +967,14 @@ func (s *Server) handleTargetToSourceNotify(data []byte) (*ike_message.IKEPayloa
 	n3ueSelf.PendingHandover = execCtx
 	s.applyNasHandoverContext(execCtx.Nas)
 
+	// Refresh DPD timestamp and timer right before handover to avoid stale dead-peer checks
+	if n3ueSelf.N3IWFUe != nil && n3ueSelf.N3IWFUe.N3IWFIKESecurityAssociation != nil {
+		ikeSA := n3ueSelf.N3IWFUe.N3IWFIKESecurityAssociation
+		ikeSA.UpdateInboundMessageTimestamp()
+		s.ResetInboundMessageTimer(ikeSA)
+		ikeLog.Trace("DPD timer refreshed before handover")
+	}
+
 	ikeLog.Infof("Prepared handover context from target-to-source notify towards %s (%d tunnels)",
 		execCtx.TargetN3iwfIP, len(execCtx.Tunnels))
 
