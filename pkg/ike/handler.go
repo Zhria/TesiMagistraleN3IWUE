@@ -303,10 +303,6 @@ func (s *Server) handleIKEAUTH(
 
 	switch ikeSecurityAssociation.State {
 	case IKEAUTH_Request:
-		if handoverNAS {
-			ikeLog.Infof("Handover NAS context present, skipping Registration NAS exchange")
-			return
-		}
 		eapIdentifier := eapReq.Identifier
 
 		// IKE_AUTH - EAP exchange
@@ -917,17 +913,16 @@ func (s *Server) handleInformational(
 			}
 		} else {
 			ikeLog.Trace("No target-to-source notify present in informational")
-		}
-		if deletePayload != nil {
-			// TODO: Handle delete payload
-			//Se c'è un handover in corso non faccio nulla.
-			if n3ueSelf.PendingHandover != nil {
-				ikeLog.Infof("Handover in progress, ignoring delete payload")
-				return
 			}
-			ikeLog.Infof("Received delete payload, sending deregistration complete event")
-			s.SendProcedureEvt(context.NewDeregistrationCompleteEvt())
-		} else if len(targetToSourceNotify) == 0 {
+			if deletePayload != nil {
+				// Allow deletion, but if handover is active keep the app alive and continue with target
+				if n3ueSelf.PendingHandover != nil {
+					ikeLog.Infof("Handover in progress, acknowledging delete without shutdown")
+				} else {
+					ikeLog.Infof("Received delete payload, sending deregistration complete event")
+					s.SendProcedureEvt(context.NewDeregistrationCompleteEvt())
+				}
+			} else if len(targetToSourceNotify) == 0 {
 			ikeLog.Tracef("Receive DPD message request")
 		}
 		s.SendN3iwfInformationExchange(n3ueSelf, responsePayload, true, true, message.MessageID)
