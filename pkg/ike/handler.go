@@ -920,6 +920,11 @@ func (s *Server) handleInformational(
 		}
 		if deletePayload != nil {
 			// TODO: Handle delete payload
+			//Se c'è un handover in corso non faccio nulla.
+			if n3ueSelf.PendingHandover != nil {
+				ikeLog.Infof("Handover in progress, ignoring delete payload")
+				return
+			}
 			ikeLog.Infof("Received delete payload, sending deregistration complete event")
 			s.SendProcedureEvt(context.NewDeregistrationCompleteEvt())
 		} else if len(targetToSourceNotify) == 0 {

@@ -453,7 +453,16 @@ func (s *Server) rebindIKEConnections(newIP string) error {
 		if err != nil {
 			return fmt.Errorf("resolve new local addr %s: %w", localTarget, err)
 		}
-
+		activePort := DEFAULT_IKE_PORT
+		if cur := n3ueCtx.N3IWFUe.IKEConnection; cur != nil && cur.UEAddr != nil {
+			activePort = cur.UEAddr.Port
+		}
+		if newConn := n3ueCtx.IKEConnection[activePort]; newConn != nil {
+			n3ueCtx.N3IWFUe.IKEConnection = newConn
+			ikeSA := n3ueCtx.N3IWFUe.N3IWFIKESecurityAssociation
+			ikeSA.StoreReqRetransUdpConnInfo(newConn)
+			ikeSA.StoreRspRetransUdpConnInfo(newConn)
+		}
 		errChan := make(chan error)
 		var wg sync.WaitGroup
 		wg.Add(1)
