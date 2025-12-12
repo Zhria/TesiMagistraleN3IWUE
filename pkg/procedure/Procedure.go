@@ -219,6 +219,14 @@ func (s *Server) handleStartHandoverEvt() {
 		return
 	}
 
+	if len(n3ueSelf.PendingHandover.Tunnels) > 0 {
+		if err := s.rebuildHandoverTunnels(n3ueSelf.PendingHandover); err != nil {
+			AppLog.Warnf("Updating tunnels for handover failed: %+v", err)
+		} else {
+			AppLog.Infof("Updated tunnels for handover (%d descriptors)", len(n3ueSelf.PendingHandover.Tunnels))
+		}
+	}
+
 	AppLog.Infof("Triggering IKE re-establishment towards target N3IWF %s",
 		n3ueSelf.PendingHandover.TargetN3iwfIP)
 	s.SendIkeEvt(n3iwue_context.NewStartIkeSaEstablishmentEvt())
