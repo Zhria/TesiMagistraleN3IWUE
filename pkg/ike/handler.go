@@ -979,7 +979,7 @@ func (s *Server) handleTargetToSourceNotify(data []byte) (*ike_message.IKEPayloa
 		execCtx.TargetN3iwfIP, len(execCtx.Tunnels))
 
 	s.SendProcedureEvt(context.NewStartHandoverEvt())
-	s.startHandoverFallbackTimer(execCtx)
+	//s.startHandoverFallbackTimer(execCtx)
 	return nil, nil
 }
 
