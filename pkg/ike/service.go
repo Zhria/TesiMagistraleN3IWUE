@@ -74,7 +74,7 @@ func (s *Server) Run(wg *sync.WaitGroup) error {
 
 	wg.Add(1)
 	s.serverWg.Add(1)
-	go s.receiver(ikeAddrPort, errChan, wg)
+	go s.receiver(ikeAddrPort, nil, errChan, wg)
 	if err, ok := <-errChan; ok {
 		s.serverCancel() // Cancel server context on error
 		return util.WrapServiceError("IKE (port 500)", err)
@@ -84,7 +84,7 @@ func (s *Server) Run(wg *sync.WaitGroup) error {
 
 	wg.Add(1)
 	s.serverWg.Add(1)
-	go s.receiver(nattAddrPort, errChan, wg)
+	go s.receiver(nattAddrPort, nil, errChan, wg)
 	if err, ok := <-errChan; ok {
 		s.serverCancel() // Cancel server context on error
 		return util.WrapServiceError("IKE (port 4500)", err)
@@ -99,7 +99,7 @@ func (s *Server) Run(wg *sync.WaitGroup) error {
 }
 
 // receiver implements the UDP message receiving functionality for IKEServer
-func (s *Server) receiver(localAddr *net.UDPAddr, errChan chan<- error, wg *sync.WaitGroup) {
+func (s *Server) receiver(localAddr *net.UDPAddr, remoteOverride *net.UDPAddr, errChan chan<- error, wg *sync.WaitGroup) {
 	ikeLog := logger.IKELog
 	defer func() {
 		if p := recover(); p != nil {
@@ -127,12 +127,18 @@ func (s *Server) receiver(localAddr *net.UDPAddr, errChan chan<- error, wg *sync
 		errChan <- err
 		return
 	}
+	if remoteOverride != nil {
+		n3iwfUDPAddr = remoteOverride
+	}
 
 	n3ueAddr := cfg.N3UEInfo.IPSecIfaceAddr + ":" + strconv.Itoa(port)
 	n3ueUDPAddr, err := util.ResolveUDPAddrWithLog(n3ueAddr, ikeLog)
 	if err != nil {
 		errChan <- err
 		return
+	}
+	if remoteOverride != nil {
+		n3ueUDPAddr = localAddr
 	}
 
 	n3iwueCtx := s.Context()
@@ -410,6 +416,56 @@ func (s *Server) cleanupAllResources() {
 
 	// Stop Retransmit Timer
 	ikeSA.StopReqRetransTimer()
+}
+
+// rebindIKEConnections recreates UDP listeners on the provided local IP while keeping the current peer endpoints.
+// It is used during handover when the UE IP changes with the Wi-Fi switch.
+func (s *Server) rebindIKEConnections(newIP string) error {
+	ikeLog := logger.IKELog
+	if newIP == "" {
+		return fmt.Errorf("new IP is empty")
+	}
+
+	n3ueCtx := s.Context()
+
+	// Close existing listeners to unblock old receivers
+	for _, udpConn := range n3ueCtx.IKEConnection {
+		if udpConn != nil && udpConn.Conn != nil {
+			util.SafeCloseConn(udpConn.Conn, ikeLog, "rebindIKE")
+		}
+	}
+
+	for _, port := range []int{DEFAULT_IKE_PORT, DEFAULT_NATT_PORT} {
+		var peerAddr *net.UDPAddr
+		if info, ok := n3ueCtx.IKEConnection[port]; ok && info != nil && info.N3IWFAddr != nil {
+			peerAddr = info.N3IWFAddr
+		} else {
+			target := fmt.Sprintf("%s:%d", s.Config().Configuration.N3IWFInfo.IPSecIfaceAddr, port)
+			resolved, err := util.ResolveUDPAddrWithLog(target, ikeLog)
+			if err != nil {
+				return fmt.Errorf("resolve default N3IWF addr: %w", err)
+			}
+			peerAddr = resolved
+		}
+
+		localTarget := fmt.Sprintf("%s:%d", newIP, port)
+		localAddr, err := util.ResolveUDPAddrWithLog(localTarget, ikeLog)
+		if err != nil {
+			return fmt.Errorf("resolve new local addr %s: %w", localTarget, err)
+		}
+
+		errChan := make(chan error)
+		var wg sync.WaitGroup
+		wg.Add(1)
+		s.serverWg.Add(1)
+		go s.receiver(localAddr, peerAddr, errChan, &wg)
+
+		if err, ok := <-errChan; ok {
+			return err
+		}
+	}
+
+	return nil
 }
 
 func (s *Server) CleanChildSAXfrm() error {

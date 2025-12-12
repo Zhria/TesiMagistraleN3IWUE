@@ -1280,12 +1280,24 @@ func (s *Server) switchWifiForHandover(ctx *context.HandoverExecutionContext) er
 	if ctx.Wifi == nil {
 		return fmt.Errorf("wifi config missing in handover context")
 	}
+	ueIface := s.Context().N3ueInfo.IPSecIfaceName
 	manager := &nmcliWifiManager{}
 	prev, err := manager.Switch(ctx.Wifi)
 	if err != nil {
 		return err
 	}
-	s.captureSourceWifi(prev)
+
+	newIP, err := currentIPv4Addr(ueIface)
+	if err != nil {
+		return fmt.Errorf("detect UE IP on %s: %w", ueIface, err)
+	}
+	if err := s.rebindIKEConnections(newIP); err != nil {
+		return fmt.Errorf("rebind IKE sockets: %w", err)
+	}
+	n3ueSelf := s.Context()
+	n3ueSelf.N3ueInfo.IPSecIfaceAddr = newIP
+
+	s.captureSourceWifi(prev, ueIface)
 	return nil
 }
 
@@ -1299,11 +1311,33 @@ func (s *Server) buildHandoverFailurePayload(reason, detail string) *ike_message
 	return payload
 }
 
-func (s *Server) captureSourceWifi(prevSSID string) {
+func (s *Server) captureSourceWifi(prevSSID, iface string) {
 	n3ueSelf := s.Context()
 	if prevSSID != "" {
 		n3ueSelf.SourceWifiSSID = prevSSID
 	}
+	if iface != "" {
+		n3ueSelf.SourceWifiIface = iface
+	}
+}
+
+func currentIPv4Addr(ifaceName string) (string, error) {
+	iface, err := net.InterfaceByName(ifaceName)
+	if err != nil {
+		return "", fmt.Errorf("lookup iface %s: %w", ifaceName, err)
+	}
+	addrs, err := iface.Addrs()
+	if err != nil {
+		return "", fmt.Errorf("list addrs on %s: %w", ifaceName, err)
+	}
+	for _, addr := range addrs {
+		if ipNet, ok := addr.(*net.IPNet); ok {
+			if ip := ipNet.IP.To4(); ip != nil {
+				return ip.String(), nil
+			}
+		}
+	}
+	return "", fmt.Errorf("no IPv4 address found on %s", ifaceName)
 }
 
 func snapshotIKEEndpoints(n3ueSelf *context.N3UE) map[int]*net.UDPAddr {
