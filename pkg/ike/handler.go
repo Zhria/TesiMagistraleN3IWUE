@@ -303,10 +303,6 @@ func (s *Server) handleIKEAUTH(
 
 	switch ikeSecurityAssociation.State {
 	case IKEAUTH_Request:
-		if handoverNAS {
-			ikeLog.Infof("Handover NAS context present, skipping Registration NAS exchange")
-			return
-		}
 		eapIdentifier := eapReq.Identifier
 
 		// IKE_AUTH - EAP exchange
