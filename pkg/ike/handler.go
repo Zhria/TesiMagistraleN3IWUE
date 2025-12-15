@@ -328,12 +328,16 @@ func (s *Server) handleIKEAUTH(
 			registrationType = nasMessage.RegistrationType5GSMobilityRegistrationUpdating
 		}
 		mobileIdentity := selectMobileIdentity5GS(n3ueSelf, handoverActive)
+		var capability5GMM *nasType.Capability5GMM
+		if ue != nil {
+			capability5GMM = ue.Get5GMMCapability()
+		}
 		registrationRequest := nasPacket.GetRegistrationRequest(
 			registrationType,
 			mobileIdentity,
 			nil,
 			n3ueSelf.UESecurityCapability,
-			nil,
+			capability5GMM,
 			nil,
 			nil,
 		)
