@@ -73,6 +73,7 @@ type N3UE struct {
 	ReRegistrationRequired bool
 	LastHandoverCommand    *HandoverCommandInfo
 	PendingHandover        *HandoverExecutionContext
+	NeedMobilityRegUpdate  bool
 	SourceWifiSSID         string
 	SourceWifiIface        string
 	SourceIKEEndpoints     map[int]*net.UDPAddr

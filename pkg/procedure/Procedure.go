@@ -98,7 +98,18 @@ func (s *Server) handleEvent(evt n3iwue_context.ProcedureEvt) {
 		// Establish NWUCP connection with N3IWF
 		s.SendNwucpEvt(n3iwue_context.NewStartNwucpConnEvt())
 	case *n3iwue_context.SuccessRegistrationEvt:
-		// Start PduSession Establishment
+		n3ueSelf := s.Context()
+		if n3ueSelf != nil && n3ueSelf.PendingHandover != nil {
+			AppLog.Info("Mobility registration update completed after handover; skipping PDU Session establishment")
+			n3ueSelf.PendingHandover = nil
+			n3ueSelf.NeedMobilityRegUpdate = false
+			n3ueSelf.NasNh = nil
+			n3ueSelf.NasNcc = 0
+			AppLog.Info("Handover completed; keep connection with N3IWF until receive SIGINT or SIGTERM")
+			return
+		}
+
+		// Start PduSession Establishment (initial registration)
 		s.SendNwucpEvt(n3iwue_context.NewStartPduSessionEstablishmentEvt())
 	case *n3iwue_context.DeregistrationCompleteEvt:
 		s.handleDeregistrationCompleteEvt()

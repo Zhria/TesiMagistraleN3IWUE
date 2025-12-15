@@ -32,6 +32,7 @@ import (
 	"github.com/free5gc/nas"
 	"github.com/free5gc/nas/nasConvert"
 	"github.com/free5gc/nas/nasMessage"
+	"github.com/free5gc/nas/nasType"
 	"github.com/free5gc/nas/security"
 	"github.com/free5gc/util/ueauth"
 )
@@ -291,10 +292,10 @@ func (s *Server) handleIKEAUTH(
 		}
 	}
 
-	handoverNAS := isNasHandoverActive(n3ueSelf)
+	handoverActive := isHandoverActive(n3ueSelf)
 
 	// In handover mode the target may complete EAP locally and reply with Success
-	if handoverNAS && eapReq != nil && eapReq.Code == ike_eap.EapCodeSuccess {
+	if handoverActive && eapReq != nil && eapReq.Code == ike_eap.EapCodeSuccess {
 		if err := s.respondWithEapSuccess(&ikePayload, ikeSecurityAssociation, ue, n3ueSelf); err != nil {
 			ikeLog.Errorf("HandleIKEAUTH() handover EAP Success: %v", err)
 		}
@@ -321,15 +322,40 @@ func (s *Server) handleIKEAUTH(
 
 		// NAS
 		n3ueSelf.UESecurityCapability = n3ueSelf.RanUeContext.GetUESecurityCapability()
+
+		registrationType := nasMessage.RegistrationType5GSInitialRegistration
+		if handoverActive {
+			registrationType = nasMessage.RegistrationType5GSMobilityRegistrationUpdating
+		}
+		mobileIdentity := selectMobileIdentity5GS(n3ueSelf, handoverActive)
 		registrationRequest := nasPacket.GetRegistrationRequest(
-			nasMessage.RegistrationType5GSInitialRegistration,
-			n3ueSelf.MobileIdentity5GS,
+			registrationType,
+			mobileIdentity,
 			nil,
 			n3ueSelf.UESecurityCapability,
 			nil,
 			nil,
 			nil,
 		)
+
+		// For mobility registration update, protect the Registration Request if we already have a NAS security context.
+		if handoverActive && ue != nil {
+			if protected, encErr := ngapPacket.EncodeNasPduWithSecurity(
+				ue,
+				registrationRequest,
+				nas.SecurityHeaderTypeIntegrityProtectedAndCiphered,
+				true,
+				false,
+			); encErr == nil {
+				registrationRequest = protected
+				n3ueSelf.NeedMobilityRegUpdate = false
+			} else {
+				ikeLog.Warnf("Failed to protect mobility Registration Request NAS: %+v", encErr)
+			}
+		} else if handoverActive {
+			// If we are in handover but cannot protect here, still avoid duplicating later if it gets accepted.
+			n3ueSelf.NeedMobilityRegUpdate = false
+		}
 
 		nasLength := make([]byte, 2)
 		binary.BigEndian.PutUint16(nasLength, uint16(len(registrationRequest)))
@@ -466,9 +492,14 @@ func (s *Server) handleIKEAUTH(
 		// nasData := eapExpanded.VendorData[4:]
 
 		// Send NAS Security Mode Complete Msg
+		registrationType := nasMessage.RegistrationType5GSInitialRegistration
+		if handoverActive {
+			registrationType = nasMessage.RegistrationType5GSMobilityRegistrationUpdating
+		}
+		mobileIdentity := selectMobileIdentity5GS(n3ueSelf, handoverActive)
 		registrationRequestWith5GMM := nasPacket.GetRegistrationRequest(
-			nasMessage.RegistrationType5GSInitialRegistration,
-			n3ueSelf.MobileIdentity5GS,
+			registrationType,
+			mobileIdentity,
 			nil,
 			n3ueSelf.UESecurityCapability,
 			ue.Get5GMMCapability(),
@@ -879,6 +910,7 @@ func (s *Server) handleInformational(
 	var deletePayload *ike_message.Delete
 	var targetToSourceNotify []byte
 	var responsePayload *ike_message.IKEPayloadContainer
+	var handoverCtx *context.HandoverExecutionContext
 
 	for idx, ikePayload := range message.Payloads {
 		switch ikePayload.Type() {
@@ -904,44 +936,62 @@ func (s *Server) handleInformational(
 		ikeLog.Infof("Informational request from %s msgID=%d (responderMsgID now %d)",
 			n3ueSelf.N3iwfInfo.IPSecIfaceAddr, message.MessageID, ikeSA.ResponderMessageID)
 		if len(targetToSourceNotify) > 0 {
-			payload, err := s.handleTargetToSourceNotify(targetToSourceNotify)
+			payload, ctx, err := s.handleTargetToSourceNotify(targetToSourceNotify)
 			if err != nil {
 				ikeLog.Errorf("Handle target-to-source notify failed: %+v", err)
 			}
 			if payload != nil && len(*payload) > 0 {
 				responsePayload = payload
 			}
+			if ctx != nil {
+				handoverCtx = ctx
+			}
 		} else {
 			ikeLog.Trace("No target-to-source notify present in informational")
+		}
+		if deletePayload != nil {
+			// Allow deletion, but if handover is active keep the app alive and continue with target
+			if n3ueSelf.PendingHandover != nil {
+				ikeLog.Infof("Handover in progress, acknowledging delete without shutdown")
+			} else {
+				ikeLog.Infof("Received delete payload, sending deregistration complete event")
+				s.SendProcedureEvt(context.NewDeregistrationCompleteEvt())
 			}
-			if deletePayload != nil {
-				// Allow deletion, but if handover is active keep the app alive and continue with target
-				if n3ueSelf.PendingHandover != nil {
-					ikeLog.Infof("Handover in progress, acknowledging delete without shutdown")
-				} else {
-					ikeLog.Infof("Received delete payload, sending deregistration complete event")
-					s.SendProcedureEvt(context.NewDeregistrationCompleteEvt())
-				}
-			} else if len(targetToSourceNotify) == 0 {
+		} else if len(targetToSourceNotify) == 0 {
 			ikeLog.Tracef("Receive DPD message request")
 		}
 		s.SendN3iwfInformationExchange(n3ueSelf, responsePayload, true, true, message.MessageID)
+
+		// Perform Wi-Fi switch only after acknowledging the informational request; otherwise the response may be lost.
+		if handoverCtx != nil {
+			if err := s.switchWifiForHandover(handoverCtx); err != nil {
+				ikeLog.Errorf("Wi-Fi switch for handover failed: %+v", err)
+				if n3ueSelf.PendingHandover == handoverCtx {
+					n3ueSelf.PendingHandover = nil
+					n3ueSelf.NeedMobilityRegUpdate = false
+				}
+				return
+			}
+			s.SendProcedureEvt(context.NewStartHandoverEvt())
+		}
 	}
 }
 
-func (s *Server) handleTargetToSourceNotify(data []byte) (*ike_message.IKEPayloadContainer, error) {
+func (s *Server) handleTargetToSourceNotify(
+	data []byte,
+) (*ike_message.IKEPayloadContainer, *context.HandoverExecutionContext, error) {
 	ikeLog := logger.IKELog
 
 	ikeLog.Infof("Received target-to-source notify (len=%d bytes)", len(data))
 
 	container, err := parseTargetToSourceContainer(data)
 	if err != nil {
-		return s.buildHandoverFailurePayload("parse_error", err.Error()), err
+		return s.buildHandoverFailurePayload("parse_error", err.Error()), nil, err
 	}
 
 	execCtx, err := buildHandoverContextFromContainer(container)
 	if err != nil {
-		return s.buildHandoverFailurePayload("invalid_payload", err.Error()), err
+		return s.buildHandoverFailurePayload("invalid_payload", err.Error()), nil, err
 	}
 
 	ikeLog.Infof("Target-to-source notify parsed: targetIP=%s natt=%t tunnels=%d wifi_config=%t",
@@ -952,14 +1002,11 @@ func (s *Server) handleTargetToSourceNotify(data []byte) (*ike_message.IKEPayloa
 			i, t.PDUSessionID, t.TargetIP, t.TargetTEID, t.UPFIP, t.GTPBindIP, t.QFIs)
 	}
 
-	if err := s.switchWifiForHandover(execCtx); err != nil {
-		return s.buildHandoverFailurePayload("wifi_switch_failed", err.Error()), err
-	}
-
 	n3ueSelf := s.Context()
 	execCtx.SourceN3iwfIP = cloneIP(net.ParseIP(n3ueSelf.N3iwfInfo.IPSecIfaceAddr))
 	n3ueSelf.SourceIKEEndpoints = snapshotIKEEndpoints(n3ueSelf)
 	n3ueSelf.PendingHandover = execCtx
+	n3ueSelf.NeedMobilityRegUpdate = true
 	s.applyNasHandoverContext(execCtx.Nas)
 
 	// Refresh DPD timestamp and timer right before handover to avoid stale dead-peer checks
@@ -973,9 +1020,8 @@ func (s *Server) handleTargetToSourceNotify(data []byte) (*ike_message.IKEPayloa
 	ikeLog.Infof("Prepared handover context from target-to-source notify towards %s (%d tunnels)",
 		execCtx.TargetN3iwfIP, len(execCtx.Tunnels))
 
-	s.SendProcedureEvt(context.NewStartHandoverEvt())
 	//s.startHandoverFallbackTimer(execCtx)
-	return nil, nil
+	return nil, execCtx, nil
 }
 
 func (s *Server) applyNasHandoverContext(nasCtx *context.NasHandoverContext) {
@@ -1006,6 +1052,27 @@ func isNasHandoverActive(n3ueSelf *context.N3UE) bool {
 		return false
 	}
 	return len(n3ueSelf.NasNh) > 0
+}
+
+func isHandoverActive(n3ueSelf *context.N3UE) bool {
+	return n3ueSelf != nil && n3ueSelf.PendingHandover != nil
+}
+
+func selectMobileIdentity5GS(n3ueSelf *context.N3UE, handoverActive bool) nasType.MobileIdentity5GS {
+	if n3ueSelf == nil {
+		return nasType.MobileIdentity5GS{}
+	}
+
+	// For mobility registration update, prefer 5G-GUTI if available.
+	if handoverActive && n3ueSelf.GUTI != nil {
+		buf := append([]uint8(nil), n3ueSelf.GUTI.Octet[:]...)
+		return nasType.MobileIdentity5GS{
+			Len:    n3ueSelf.GUTI.Len,
+			Buffer: buf,
+		}
+	}
+
+	return n3ueSelf.MobileIdentity5GS
 }
 
 func selectKn3iwfKeyMaterial(n3ueSelf *context.N3UE) ([]byte, string, error) {
@@ -1438,6 +1505,7 @@ func (s *Server) fallbackToSource(ctx *context.HandoverExecutionContext) {
 	}
 
 	n3ueSelf.PendingHandover = nil
+	n3ueSelf.NeedMobilityRegUpdate = false
 	s.SendIkeEvt(context.NewStartIkeSaEstablishmentEvt())
 }
 

@@ -11,12 +11,15 @@ import (
 	"github.com/pkg/errors"
 
 	"github.com/free5gc/n3iwue/internal/logger"
+	"github.com/free5gc/n3iwue/internal/packet/nasPacket"
 	"github.com/free5gc/n3iwue/internal/packet/ngapPacket"
 	n3ue_security "github.com/free5gc/n3iwue/internal/security"
 	"github.com/free5gc/n3iwue/internal/util"
 	n3iwue_context "github.com/free5gc/n3iwue/pkg/context"
 	"github.com/free5gc/n3iwue/pkg/factory"
 	"github.com/free5gc/nas"
+	"github.com/free5gc/nas/nasMessage"
+	"github.com/free5gc/nas/nasType"
 )
 
 const (
@@ -83,6 +86,9 @@ func (s *Server) serveConn(errChan chan<- error) {
 	close(errChan)
 
 	nwucpLog.Tracef("Successfully Create CP  %+v", n3ueSelf.N3iwfNASAddr)
+
+	// Mobility Registration Update disabled (handover handled via PathSwitchRequest on the target N3IWF).
+	// s.maybeSendMobilityRegistrationUpdate()
 
 	defer func() {
 		util.SafeCloseConn(tcpConnWithN3IWF, nwucpLog, "serveConn")
@@ -151,6 +157,40 @@ func (s *Server) DecapNasPdu(nasEnv []byte) (*nas.Message, error) {
 		return nil, errors.Wrap(err, "NAS Decode Fail")
 	}
 	return nasMsg, nil
+}
+
+func (s *Server) maybeSendMobilityRegistrationUpdate() {
+	nwucpLog := logger.NWuCPLog
+	n3ueSelf := s.Context()
+	if n3ueSelf == nil || !n3ueSelf.NeedMobilityRegUpdate {
+		return
+	}
+	if n3ueSelf.RanUeContext == nil || n3ueSelf.N3IWFRanUe == nil || n3ueSelf.N3IWFRanUe.TCPConnection == nil {
+		nwucpLog.Warn("Mobility registration update skipped: missing UE context or TCP connection")
+		return
+	}
+
+	mobileIdentity := n3ueSelf.MobileIdentity5GS
+	if n3ueSelf.GUTI != nil {
+		mobileIdentity = nasType.MobileIdentity5GS{
+			Len:    n3ueSelf.GUTI.Len,
+			Buffer: append([]uint8(nil), n3ueSelf.GUTI.Octet[:]...),
+		}
+	}
+
+	nwucpLog.Infof("Sending NAS Registration Request (Mobility Registration Update) to target N3IWF")
+	pdu := nasPacket.GetRegistrationRequest(
+		nasMessage.RegistrationType5GSMobilityRegistrationUpdating,
+		mobileIdentity,
+		nil,
+		n3ueSelf.RanUeContext.GetUESecurityCapability(),
+		n3ueSelf.RanUeContext.Get5GMMCapability(),
+		nil,
+		nil,
+	)
+	SendNasMsg(n3ueSelf.RanUeContext, n3ueSelf.N3IWFRanUe.TCPConnection, pdu)
+
+	n3ueSelf.NeedMobilityRegUpdate = false
 }
 
 func (s *Server) dispatcher(wg *sync.WaitGroup) {

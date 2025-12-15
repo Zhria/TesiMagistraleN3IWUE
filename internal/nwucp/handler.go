@@ -282,6 +282,7 @@ func (s *Server) handleHandoverCommand(raw []byte, command *ngapType.HandoverCom
 	}
 	execCtx.Command = info
 	n3ueSelf.PendingHandover = execCtx
+	n3ueSelf.NeedMobilityRegUpdate = true
 
 	nwucpLog.Infof("Prepared handover context towards target %s (%d tunnels)",
 		execCtx.TargetN3iwfIP, len(execCtx.Tunnels))
