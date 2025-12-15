@@ -239,6 +239,7 @@ func (s *Server) handleIKEAUTH(
 	var responseTrafficSelectorInitiator *ike_message.TrafficSelectorInitiator
 	var responseTrafficSelectorResponder *ike_message.TrafficSelectorResponder
 	var responseConfiguration *ike_message.Configuration
+	receivedAuthFailure := false
 	var err error
 	var ok bool
 	n3ueSelf.N3iwfNASAddr = new(net.TCPAddr)
@@ -272,6 +273,9 @@ func (s *Server) handleIKEAUTH(
 				n3ueSelf.N3iwfNASAddr.Port = int(
 					binary.BigEndian.Uint16(notification.NotificationData),
 				)
+			}
+			if notification.NotifyMessageType == ike_message.AUTHENTICATION_FAILED {
+				receivedAuthFailure = true
 			}
 		case ike_message.TypeCP:
 			responseConfiguration = ikePayload.(*ike_message.Configuration)
@@ -569,6 +573,22 @@ func (s *Server) handleIKEAUTH(
 			ikeLog.Errorf("HandleIKEAUTH() EAP_NASSecurityComplete: %v", err)
 		}
 	case IKEAUTH_Authentication:
+		if receivedAuthFailure {
+			ikeLog.Error("IKE_AUTH authentication failed (received AUTHENTICATION_FAILED notify from N3IWF)")
+			return
+		}
+		if ikeSecurityAssociation.IKEAuthResponseSA == nil ||
+			len(ikeSecurityAssociation.IKEAuthResponseSA.Proposals) == 0 ||
+			len(ikeSecurityAssociation.IKEAuthResponseSA.Proposals[0].SPI) < 4 {
+			ikeLog.Error("IKE_AUTH response missing Child-SA (SA/Proposal/SPI), cannot complete Child SA")
+			return
+		}
+		if responseTrafficSelectorInitiator == nil || responseTrafficSelectorResponder == nil ||
+			len(responseTrafficSelectorInitiator.TrafficSelectors) == 0 ||
+			len(responseTrafficSelectorResponder.TrafficSelectors) == 0 {
+			ikeLog.Error("IKE_AUTH response missing Traffic Selectors, cannot complete Child SA")
+			return
+		}
 		// Get outbound SPI from proposal provided by N3IWF
 		OutboundSPI := binary.BigEndian.Uint32(
 			ikeSecurityAssociation.IKEAuthResponseSA.Proposals[0].SPI,
@@ -1084,11 +1104,11 @@ func selectKn3iwfKeyMaterial(n3ueSelf *context.N3UE) ([]byte, string, error) {
 		return nil, "", fmt.Errorf("UE security context unavailable")
 	}
 
-	if len(n3ueSelf.NasNh) > 0 {
-		return n3ueSelf.NasNh, "NH", nil
-	}
 	if len(n3ueSelf.RanUeContext.Kamf) > 0 {
 		return n3ueSelf.RanUeContext.Kamf, "Kamf", nil
+	}
+	if len(n3ueSelf.NasNh) > 0 {
+		return n3ueSelf.NasNh, "NH", nil
 	}
 
 	return nil, "", fmt.Errorf("no key material for KN3IWF derivation")
