@@ -3,6 +3,7 @@ package xfrm
 import (
 	"fmt"
 	"net"
+	"strings"
 
 	"github.com/pkg/errors"
 	"github.com/vishvananda/netlink"
@@ -205,22 +206,34 @@ func SetupIPsecXfrmi(
 		return nil, err
 	}
 
-	link := &netlink.Xfrmi{
-		LinkAttrs: netlink.LinkAttrs{
-			MTU:         1478,
-			Name:        xfrmIfaceName,
-			ParentIndex: parent.Attrs().Index,
-		},
-		Ifid: xfrmIfaceId,
-	}
-
-	// ip link add
-	if err = netlink.LinkAdd(link); err != nil {
-		return nil, err
-	}
-
 	if xfrmi, err = netlink.LinkByName(xfrmIfaceName); err != nil {
-		return nil, err
+		link := &netlink.Xfrmi{
+			LinkAttrs: netlink.LinkAttrs{
+				MTU:         1478,
+				Name:        xfrmIfaceName,
+				ParentIndex: parent.Attrs().Index,
+			},
+			Ifid: xfrmIfaceId,
+		}
+
+		// ip link add
+		if err = netlink.LinkAdd(link); err != nil {
+			// If it already exists, treat it as idempotent and reuse it.
+			if xfrmi, err = netlink.LinkByName(xfrmIfaceName); err != nil {
+				return nil, err
+			}
+		} else if xfrmi, err = netlink.LinkByName(xfrmIfaceName); err != nil {
+			return nil, err
+		}
+	}
+
+	if existingXfrmi, ok := xfrmi.(*netlink.Xfrmi); ok {
+		if existingXfrmi.Ifid != xfrmIfaceId {
+			return nil, fmt.Errorf("xfrmi %s already exists with ifid %d (expected %d)", xfrmIfaceName, existingXfrmi.Ifid, xfrmIfaceId)
+		}
+		if existingXfrmi.Attrs() != nil && existingXfrmi.Attrs().ParentIndex != parent.Attrs().Index {
+			return nil, fmt.Errorf("xfrmi %s already exists with parent index %d (expected %d)", xfrmIfaceName, existingXfrmi.Attrs().ParentIndex, parent.Attrs().Index)
+		}
 	}
 
 	// ip addr add
@@ -228,8 +241,20 @@ func SetupIPsecXfrmi(
 		IPNet: xfrmIfaceAddr,
 	}
 
-	if err := netlink.AddrAdd(xfrmi, linkIPSecAddr); err != nil {
-		return nil, err
+	addrExists := false
+	if addrs, addrErr := netlink.AddrList(xfrmi, netlink.FAMILY_ALL); addrErr == nil {
+		for _, addr := range addrs {
+			if addr.IPNet != nil && xfrmIfaceAddr != nil && addr.IPNet.String() == xfrmIfaceAddr.String() {
+				addrExists = true
+				break
+			}
+		}
+	}
+
+	if !addrExists {
+		if err := netlink.AddrAdd(xfrmi, linkIPSecAddr); err != nil && !strings.Contains(err.Error(), "file exists") {
+			return nil, err
+		}
 	}
 
 	// ip link set ... up
@@ -238,7 +263,19 @@ func SetupIPsecXfrmi(
 	}
 
 	n3ueSelf := context.N3UESelf()
-	n3ueSelf.CreatedIface = append(n3ueSelf.CreatedIface, &xfrmi)
+	alreadyTracked := false
+	for _, iface := range n3ueSelf.CreatedIface {
+		if iface == nil || (*iface).Attrs() == nil {
+			continue
+		}
+		if (*iface).Attrs().Name == xfrmIfaceName {
+			alreadyTracked = true
+			break
+		}
+	}
+	if !alreadyTracked {
+		n3ueSelf.CreatedIface = append(n3ueSelf.CreatedIface, &xfrmi)
+	}
 
 	return xfrmi, nil
 }
