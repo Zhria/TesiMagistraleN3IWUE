@@ -242,6 +242,15 @@ func (s *Server) handleStartHandoverEvt() {
 		}
 	}
 
+	// During initial registration the XFRM interface ID is incremented when the user-plane Child SA is created.
+	// For handover we want to reuse the same CP/UP interface IDs, so reset it to the configured base before
+	// starting the new IKE establishment (UP will increment it again when creating the GRE-protected Child SA).
+	baseIfid := s.Config().Configuration.N3UEInfo.XfrmiId
+	if n3ueSelf.N3ueInfo.XfrmiId != baseIfid {
+		AppLog.Infof("Handover prep: resetting XFRMiId from %d to %d", n3ueSelf.N3ueInfo.XfrmiId, baseIfid)
+		n3ueSelf.N3ueInfo.XfrmiId = baseIfid
+	}
+
 	AppLog.Infof("Triggering IKE re-establishment towards target N3IWF %s",
 		n3ueSelf.PendingHandover.TargetN3iwfIP)
 	s.SendIkeEvt(n3iwue_context.NewStartIkeSaEstablishmentEvt())

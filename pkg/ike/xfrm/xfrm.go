@@ -104,7 +104,21 @@ func ApplyXFRMRule(
 	// Commit xfrm state to netlink
 	var err error
 	if err = netlink.XfrmStateAdd(xfrmState); err != nil {
-		return fmt.Errorf("Set XFRM state rule failed: %+v", err)
+		if strings.Contains(err.Error(), "file exists") {
+			_ = netlink.XfrmStateDel(xfrmState)
+			if err = netlink.XfrmStateAdd(xfrmState); err != nil {
+				if cleanupErr := deleteExistingXfrmState(xfrmState); cleanupErr == nil {
+					err = netlink.XfrmStateAdd(xfrmState)
+				} else {
+					return fmt.Errorf("Set XFRM state rule failed: %v (cleanup: %v)", err, cleanupErr)
+				}
+			}
+			if err != nil {
+				return fmt.Errorf("Set XFRM state rule failed: %+v", err)
+			}
+		} else {
+			return fmt.Errorf("Set XFRM state rule failed: %+v", err)
+		}
 	}
 
 	childSecurityAssociation.XfrmStateList = append(childSecurityAssociation.XfrmStateList, *xfrmState)
@@ -135,7 +149,21 @@ func ApplyXFRMRule(
 
 	// Commit xfrm policy to netlink
 	if err = netlink.XfrmPolicyAdd(xfrmPolicy); err != nil {
-		return fmt.Errorf("Set XFRM policy rule failed: %+v", err)
+		if strings.Contains(err.Error(), "file exists") {
+			_ = netlink.XfrmPolicyDel(xfrmPolicy)
+			if err = netlink.XfrmPolicyAdd(xfrmPolicy); err != nil {
+				if cleanupErr := deleteExistingXfrmPolicy(xfrmPolicy); cleanupErr == nil {
+					err = netlink.XfrmPolicyAdd(xfrmPolicy)
+				} else {
+					return fmt.Errorf("Set XFRM policy rule failed: %v (cleanup: %v)", err, cleanupErr)
+				}
+			}
+			if err != nil {
+				return fmt.Errorf("Set XFRM policy rule failed: %+v", err)
+			}
+		} else {
+			return fmt.Errorf("Set XFRM policy rule failed: %+v", err)
+		}
 	}
 
 	childSecurityAssociation.XfrmPolicyList = append(childSecurityAssociation.XfrmPolicyList, *xfrmPolicy)
@@ -167,7 +195,21 @@ func ApplyXFRMRule(
 
 	// Commit xfrm state to netlink
 	if err = netlink.XfrmStateAdd(xfrmState); err != nil {
-		return fmt.Errorf("Set XFRM state rule failed: %+v", err)
+		if strings.Contains(err.Error(), "file exists") {
+			_ = netlink.XfrmStateDel(xfrmState)
+			if err = netlink.XfrmStateAdd(xfrmState); err != nil {
+				if cleanupErr := deleteExistingXfrmState(xfrmState); cleanupErr == nil {
+					err = netlink.XfrmStateAdd(xfrmState)
+				} else {
+					return fmt.Errorf("Set XFRM state rule failed: %v (cleanup: %v)", err, cleanupErr)
+				}
+			}
+			if err != nil {
+				return fmt.Errorf("Set XFRM state rule failed: %+v", err)
+			}
+		} else {
+			return fmt.Errorf("Set XFRM state rule failed: %+v", err)
+		}
 	}
 
 	childSecurityAssociation.XfrmStateList = append(childSecurityAssociation.XfrmStateList, *xfrmState)
@@ -184,12 +226,110 @@ func ApplyXFRMRule(
 
 	// Commit xfrm policy to netlink
 	if err = netlink.XfrmPolicyAdd(xfrmPolicy); err != nil {
-		return fmt.Errorf("Set XFRM policy rule failed: %+v", err)
+		if strings.Contains(err.Error(), "file exists") {
+			_ = netlink.XfrmPolicyDel(xfrmPolicy)
+			if err = netlink.XfrmPolicyAdd(xfrmPolicy); err != nil {
+				if cleanupErr := deleteExistingXfrmPolicy(xfrmPolicy); cleanupErr == nil {
+					err = netlink.XfrmPolicyAdd(xfrmPolicy)
+				} else {
+					return fmt.Errorf("Set XFRM policy rule failed: %v (cleanup: %v)", err, cleanupErr)
+				}
+			}
+			if err != nil {
+				return fmt.Errorf("Set XFRM policy rule failed: %+v", err)
+			}
+		} else {
+			return fmt.Errorf("Set XFRM policy rule failed: %+v", err)
+		}
 	}
 
 	childSecurityAssociation.XfrmPolicyList = append(childSecurityAssociation.XfrmPolicyList, *xfrmPolicy)
 
 	return nil
+}
+
+func deleteExistingXfrmState(target *netlink.XfrmState) error {
+	if target == nil {
+		return nil
+	}
+
+	states, err := netlink.XfrmStateList(netlink.FAMILY_ALL)
+	if err != nil {
+		return err
+	}
+
+	var firstErr error
+	for idx := range states {
+		state := states[idx]
+		if state.Proto != target.Proto {
+			continue
+		}
+		if state.Spi != target.Spi {
+			continue
+		}
+		if state.Ifid != target.Ifid {
+			continue
+		}
+		if !ipEqual(state.Src, target.Src) || !ipEqual(state.Dst, target.Dst) {
+			continue
+		}
+
+		stateCopy := state
+		if err := netlink.XfrmStateDel(&stateCopy); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+
+	return firstErr
+}
+
+func deleteExistingXfrmPolicy(target *netlink.XfrmPolicy) error {
+	if target == nil {
+		return nil
+	}
+
+	policies, err := netlink.XfrmPolicyList(netlink.FAMILY_ALL)
+	if err != nil {
+		return err
+	}
+
+	var firstErr error
+	for idx := range policies {
+		policy := policies[idx]
+		if policy.Dir != target.Dir {
+			continue
+		}
+		if policy.Ifid != target.Ifid {
+			continue
+		}
+		if policy.Proto != target.Proto {
+			continue
+		}
+		if !ipNetEqual(policy.Src, target.Src) || !ipNetEqual(policy.Dst, target.Dst) {
+			continue
+		}
+
+		policyCopy := policy
+		if err := netlink.XfrmPolicyDel(&policyCopy); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+
+	return firstErr
+}
+
+func ipEqual(a, b net.IP) bool {
+	if a == nil || b == nil {
+		return a == nil && b == nil
+	}
+	return a.Equal(b)
+}
+
+func ipNetEqual(a, b *net.IPNet) bool {
+	if a == nil || b == nil {
+		return a == nil && b == nil
+	}
+	return a.String() == b.String()
 }
 
 func SetupIPsecXfrmi(

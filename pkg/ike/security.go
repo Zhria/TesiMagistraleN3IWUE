@@ -102,12 +102,22 @@ func ParseIPAddressInformationToChildSecurityAssociation(
 		return errors.New("childSecurityAssociation is nil")
 	}
 
-	childSecurityAssociation.PeerPublicIPAddr = net.ParseIP(
-		factory.N3iwfInfo.IPSecIfaceAddr,
-	)
-	childSecurityAssociation.LocalPublicIPAddr = net.ParseIP(
-		factory.N3ueInfo.IPSecIfaceAddr,
-	)
+	n3ueSelf := context.N3UESelf()
+	if n3ueSelf == nil {
+		return errors.New("n3ue context is nil")
+	}
+
+	peerIP := net.ParseIP(n3ueSelf.N3iwfInfo.IPSecIfaceAddr)
+	if peerIP == nil {
+		return errors.Errorf("invalid N3IWF IPSecIfaceAddr: %q", n3ueSelf.N3iwfInfo.IPSecIfaceAddr)
+	}
+	localIP := net.ParseIP(n3ueSelf.N3ueInfo.IPSecIfaceAddr)
+	if localIP == nil {
+		return errors.Errorf("invalid UE IPSecIfaceAddr: %q", n3ueSelf.N3ueInfo.IPSecIfaceAddr)
+	}
+
+	childSecurityAssociation.PeerPublicIPAddr = peerIP
+	childSecurityAssociation.LocalPublicIPAddr = localIP
 
 	childSecurityAssociation.TrafficSelectorLocal = net.IPNet{
 		IP:   trafficSelectorLocal.StartAddress,
