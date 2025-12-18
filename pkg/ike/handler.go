@@ -1137,6 +1137,10 @@ func (s *Server) handleTargetToSourceNotify(
 
 	n3ueSelf := s.Context()
 	execCtx.SourceN3iwfIP = cloneIP(net.ParseIP(n3ueSelf.N3iwfInfo.IPSecIfaceAddr))
+	execCtx.SourceN3iwfInnerIP = cloneIP(n3ueSelf.TemporaryUPIPAddr)
+	if execCtx.SourceN3iwfInnerIP == nil {
+		execCtx.SourceN3iwfInnerIP = cloneIP(net.ParseIP(n3ueSelf.N3iwfInfo.IPsecInnerAddr))
+	}
 	n3ueSelf.SourceIKEEndpoints = snapshotIKEEndpoints(n3ueSelf)
 	n3ueSelf.PendingHandover = execCtx
 	n3ueSelf.NeedMobilityRegUpdate = true

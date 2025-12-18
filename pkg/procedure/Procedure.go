@@ -237,8 +237,14 @@ func (s *Server) handleStartHandoverEvt() {
 		len(n3ueSelf.PendingHandover.Tunnels))
 
 	if len(n3ueSelf.PendingHandover.Tunnels) > 0 {
-		if err := s.rebuildHandoverTunnels(n3ueSelf.PendingHandover); err != nil {
-			AppLog.Warnf("Updating tunnels for handover failed: %+v", err)
+		srcInner := n3ueSelf.PendingHandover.SourceN3iwfInnerIP
+		tgtInner := n3ueSelf.PendingHandover.TargetN3iwfInnerIP
+		if srcInner != nil && len(srcInner) > 0 && tgtInner != nil && len(tgtInner) > 0 && srcInner.Equal(tgtInner) {
+			AppLog.Infof("Skipping GRE rebuild: N3IWF inner IP unchanged (source=%s target=%s)", srcInner, tgtInner)
+		} else {
+			if err := s.rebuildHandoverTunnels(n3ueSelf.PendingHandover); err != nil {
+				AppLog.Warnf("Updating tunnels for handover failed: %+v", err)
+			}
 		}
 	}
 

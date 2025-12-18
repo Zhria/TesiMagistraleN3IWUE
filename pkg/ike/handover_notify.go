@@ -82,11 +82,12 @@ func buildHandoverContextFromContainer(container *targetToSourceContainer) (*n3i
 	}
 
 	exec := &n3iwue_context.HandoverExecutionContext{
-		TargetN3iwfIP:   targetIP,
-		TargetN3iwfFQDN: container.Access.FQDN,
-		TargetIKEPort:   ikePort,
-		TargetNATTPort:  nattPort,
-		EnableNATT:      container.Access.NATTraversal,
+		TargetN3iwfIP:      targetIP,
+		TargetN3iwfInnerIP: cloneIP(parseOptionalIP(container.Access.N3iwfIP)),
+		TargetN3iwfFQDN:    container.Access.FQDN,
+		TargetIKEPort:      ikePort,
+		TargetNATTPort:     nattPort,
+		EnableNATT:         container.Access.NATTraversal,
 	}
 
 	if nasCtx, err := buildNasContext(container.NAS); err != nil {

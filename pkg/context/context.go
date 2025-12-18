@@ -173,18 +173,20 @@ type HandoverTunnelInfo struct {
 }
 
 type HandoverExecutionContext struct {
-	Command           *HandoverCommandInfo
-	SourceAmfUeNgapID int64
-	SourceRanUeNgapID int64
-	TargetN3iwfIP     net.IP
-	TargetN3iwfFQDN   string
-	TargetIKEPort     int
-	TargetNATTPort    int
-	EnableNATT        bool
-	Nas               *NasHandoverContext
-	Tunnels           []HandoverTunnelInfo
-	Wifi              *WifiHandoverInfo
-	SourceN3iwfIP     net.IP
+	Command            *HandoverCommandInfo
+	SourceAmfUeNgapID  int64
+	SourceRanUeNgapID  int64
+	TargetN3iwfIP      net.IP
+	TargetN3iwfInnerIP net.IP
+	TargetN3iwfFQDN    string
+	TargetIKEPort      int
+	TargetNATTPort     int
+	EnableNATT         bool
+	Nas                *NasHandoverContext
+	Tunnels            []HandoverTunnelInfo
+	Wifi               *WifiHandoverInfo
+	SourceN3iwfIP      net.IP
+	SourceN3iwfInnerIP net.IP
 }
 
 type WifiHandoverInfo struct {
