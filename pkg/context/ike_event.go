@@ -25,6 +25,9 @@ const (
 
 	// For re-connection event
 	IkeReConnect
+
+	// For MOBIKE update (handover)
+	SendMobikeUpdate
 )
 
 var ikeEvtTypeStr = []string{
@@ -45,6 +48,9 @@ var ikeEvtTypeStr = []string{
 
 	// For re-connection event
 	IkeReConnect: "IkeReConnect",
+
+	// For MOBIKE update (handover)
+	SendMobikeUpdate: "SendMobikeUpdate",
 }
 
 func (e IkeEventType) String() string {
@@ -194,4 +200,16 @@ func (evt *IkeReConnectEvt) Type() IkeEventType {
 
 func NewIkeReConnectEvt() *IkeReConnectEvt {
 	return &IkeReConnectEvt{}
+}
+
+// For MOBIKE update (handover)
+
+type SendMobikeUpdateEvt struct{}
+
+func (evt *SendMobikeUpdateEvt) Type() IkeEventType {
+	return SendMobikeUpdate
+}
+
+func NewSendMobikeUpdateEvt() *SendMobikeUpdateEvt {
+	return &SendMobikeUpdateEvt{}
 }

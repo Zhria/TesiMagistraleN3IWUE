@@ -242,16 +242,15 @@ func (s *Server) handleStartHandoverEvt() {
 		}
 	}
 
-	// During initial registration the XFRM interface ID is incremented when the user-plane Child SA is created.
-	// For handover we want to reuse the same CP/UP interface IDs, so reset it to the configured base before
-	// starting the new IKE establishment (UP will increment it again when creating the GRE-protected Child SA).
-	baseIfid := s.Config().Configuration.N3UEInfo.XfrmiId
-	if n3ueSelf.N3ueInfo.XfrmiId != baseIfid {
-		AppLog.Infof("Handover prep: resetting XFRMiId from %d to %d", n3ueSelf.N3ueInfo.XfrmiId, baseIfid)
-		n3ueSelf.N3ueInfo.XfrmiId = baseIfid
+	// Prefer MOBIKE UPDATE_SA_ADDRESSES (stateful IPSec) if negotiated; otherwise fall back to full IKE re-establishment.
+	if n3ueSelf.N3IWFUe != nil && n3ueSelf.N3IWFUe.N3IWFIKESecurityAssociation != nil &&
+		n3ueSelf.N3IWFUe.N3IWFIKESecurityAssociation.MobikeSupported {
+		AppLog.Infof("Triggering MOBIKE UPDATE_SA_ADDRESSES towards target N3IWF %s", n3ueSelf.PendingHandover.TargetN3iwfIP)
+		s.SendIkeEvt(n3iwue_context.NewSendMobikeUpdateEvt())
+		return
 	}
 
-	AppLog.Infof("Triggering IKE re-establishment towards target N3IWF %s",
+	AppLog.Infof("MOBIKE not available; triggering IKE re-establishment towards target N3IWF %s",
 		n3ueSelf.PendingHandover.TargetN3iwfIP)
 	s.SendIkeEvt(n3iwue_context.NewStartIkeSaEstablishmentEvt())
 }

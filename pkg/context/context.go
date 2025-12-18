@@ -78,6 +78,9 @@ type N3UE struct {
 	SourceWifiIface        string
 	SourceIKEEndpoints     map[int]*net.UDPAddr
 	HandoverFallbackTimer  *time.Timer
+
+	// MOBIKE handover update timer (fallback to full IKE re-establishment if no reply)
+	MobikeUpdateTimer *time.Timer
 }
 
 func N3UESelf() *N3UE {
@@ -237,6 +240,10 @@ type IKESecurityAssociation struct {
 	// NAT detection
 	UEIsBehindNAT    bool
 	N3IWFIsBehindNAT bool
+
+	// MOBIKE (RFC 4555)
+	MobikeSupported          bool
+	PendingMobikeUpdateMsgID uint32
 
 	IsUseDPD bool
 

@@ -139,6 +139,9 @@ func (s *Server) SendIkeAuth() {
 	// Identification
 	ikePayload.BuildIdentificationInitiator(ike_message.ID_KEY_ID, []byte("UE"))
 
+	// MOBIKE (RFC 4555) capability negotiation
+	ikePayload.BuildNotification(ike_message.TypeNone, ike_message.MOBIKE_SUPPORTED, nil, nil)
+
 	// Security Association
 	n3ueContext.SecurityAssociation = ikePayload.BuildSecurityAssociation()
 	// Proposal 1

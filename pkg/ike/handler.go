@@ -85,6 +85,8 @@ func (s *Server) handleEvent(ikeEvt context.IkeEvt) {
 	// For Procedure event
 	case *context.StartIkeSaEstablishmentEvt:
 		s.handleStartIkeSaEstablishment()
+	case *context.SendMobikeUpdateEvt:
+		s.handleSendMobikeUpdate()
 	case *context.IkeReConnectEvt:
 		s.handleIkeReconnect()
 	default:
@@ -110,6 +112,90 @@ func (s *Server) handleStartIkeSaEstablishment() {
 	n3ueContext.ContinuousIkeSaInitTimer = time.AfterFunc(interval, func() {
 		s.SendIkeEvt(context.NewStartIkeSaEstablishmentEvt())
 	})
+}
+
+func (s *Server) handleSendMobikeUpdate() {
+	ikeLog := logger.IKELog
+	n3ueSelf := s.Context()
+	if n3ueSelf == nil || n3ueSelf.N3IWFUe == nil || n3ueSelf.N3IWFUe.N3IWFIKESecurityAssociation == nil {
+		ikeLog.Warn("MOBIKE update requested but no active IKE SA; falling back to IKE re-establishment")
+		s.SendIkeEvt(context.NewStartIkeSaEstablishmentEvt())
+		return
+	}
+
+	ikeSA := n3ueSelf.N3IWFUe.N3IWFIKESecurityAssociation
+	if !ikeSA.MobikeSupported {
+		ikeLog.Warn("MOBIKE not negotiated; falling back to IKE re-establishment")
+		s.SendIkeEvt(context.NewStartIkeSaEstablishmentEvt())
+		return
+	}
+
+	localIP := net.ParseIP(n3ueSelf.N3ueInfo.IPSecIfaceAddr)
+	peerIP := net.ParseIP(n3ueSelf.N3iwfInfo.IPSecIfaceAddr)
+	if localIP == nil || peerIP == nil {
+		ikeLog.Warnf("Invalid local/peer IP for MOBIKE (local=%q peer=%q); falling back",
+			n3ueSelf.N3ueInfo.IPSecIfaceAddr, n3ueSelf.N3iwfInfo.IPSecIfaceAddr)
+		s.SendIkeEvt(context.NewStartIkeSaEstablishmentEvt())
+		return
+	}
+
+	// Update XFRM rules for all Child SAs (CP + UP) to use the new outer addresses.
+	for _, child := range n3ueSelf.N3IWFUe.N3IWFChildSecurityAssociation {
+		if child == nil {
+			continue
+		}
+
+		var ifid uint32 = n3ueSelf.N3ueInfo.XfrmiId
+		if len(child.XfrmStateList) > 0 && child.XfrmStateList[0].Ifid > 0 {
+			ifid = uint32(child.XfrmStateList[0].Ifid) // #nosec G115
+		}
+
+		ueIsInitiator := true
+		if child.SelectedIPProtocol == unix.IPPROTO_GRE {
+			ueIsInitiator = false
+		}
+
+		// Remove old rules first (they refer to the previous outer IPs).
+		if err := xfrm.DeleteChildSAXfrm(child); err != nil {
+			ikeLog.Warnf("MOBIKE: deleting old XFRM rules failed for spi=0x%08x: %v", child.InboundSPI, err)
+		}
+
+		child.LocalPublicIPAddr = localIP
+		child.PeerPublicIPAddr = peerIP
+		if child.EnableEncapsulate && n3ueSelf.N3IWFUe.IKEConnection != nil &&
+			n3ueSelf.N3IWFUe.IKEConnection.UEAddr != nil &&
+			n3ueSelf.N3IWFUe.IKEConnection.N3IWFAddr != nil {
+			child.NATPort = n3ueSelf.N3IWFUe.IKEConnection.UEAddr.Port
+			child.N3IWFPort = n3ueSelf.N3IWFUe.IKEConnection.N3IWFAddr.Port
+		}
+
+		if err := xfrm.ApplyXFRMRule(ueIsInitiator, ifid, child); err != nil {
+			ikeLog.Warnf("MOBIKE: applying updated XFRM rules failed for spi=0x%08x: %v", child.InboundSPI, err)
+		}
+	}
+
+	// Send UPDATE_SA_ADDRESSES INFORMATIONAL to the (new) target N3IWF.
+	ikeSA.InitiatorMessageID++
+	var payload ike_message.IKEPayloadContainer
+	payload.BuildNotification(ike_message.TypeNone, ike_message.UPDATE_SA_ADDRESSES, nil, nil)
+	ikeSA.PendingMobikeUpdateMsgID = ikeSA.InitiatorMessageID
+
+	if n3ueSelf.MobikeUpdateTimer != nil {
+		n3ueSelf.MobikeUpdateTimer.Stop()
+		n3ueSelf.MobikeUpdateTimer = nil
+	}
+
+	n3ueSelf.MobikeUpdateTimer = time.AfterFunc(5*time.Second, func() {
+		// If there is no response, fall back to the existing break-before-make logic.
+		if ikeSA.PendingMobikeUpdateMsgID != 0 {
+			logger.IKELog.Warn("MOBIKE update timed out; falling back to IKE re-establishment")
+			s.SendIkeEvt(context.NewStartIkeSaEstablishmentEvt())
+		}
+	})
+
+	ikeLog.Infof("Sending MOBIKE UPDATE_SA_ADDRESSES msgID=%d to %s",
+		ikeSA.PendingMobikeUpdateMsgID, n3ueSelf.N3IWFUe.IKEConnection.N3IWFAddr)
+	s.SendN3iwfInformationExchange(n3ueSelf, &payload, true, false, ikeSA.InitiatorMessageID)
 }
 
 // stopContinuousIkeSaInit stops the continuous IKE_SA_INIT timer
@@ -261,6 +347,10 @@ func (s *Server) handleIKEAUTH(
 			ikeLog.Info("Get CERT")
 		case ike_message.TypeN:
 			notification := ikePayload.(*ike_message.Notification)
+			if notification.ProtocolID == ike_message.TypeNone &&
+				notification.NotifyMessageType == ike_message.MOBIKE_SUPPORTED {
+				ikeSecurityAssociation.MobikeSupported = true
+			}
 			if notification.NotifyMessageType == ike_message.Vendor3GPPNotifyTypeNAS_IP4_ADDRESS {
 				n3ueSelf.N3iwfNASAddr.IP = net.IPv4(
 					notification.NotificationData[0],
@@ -930,6 +1020,25 @@ func (s *Server) handleInformational(
 
 	n3ueSelf := s.Context()
 	ikeSA := n3ueSelf.N3IWFUe.N3IWFIKESecurityAssociation
+
+	// Handle responses to our own INFORMATIONAL requests (DPD, MOBIKE, etc.).
+	if message.IsResponse() {
+		if ikeSA != nil && ikeSA.PendingMobikeUpdateMsgID != 0 && message.IKEHeader.MessageID == ikeSA.PendingMobikeUpdateMsgID {
+			ikeLog.Infof("MOBIKE UPDATE_SA_ADDRESSES acknowledged (msgID=%d)", ikeSA.PendingMobikeUpdateMsgID)
+			ikeSA.PendingMobikeUpdateMsgID = 0
+			if n3ueSelf.MobikeUpdateTimer != nil {
+				n3ueSelf.MobikeUpdateTimer.Stop()
+				n3ueSelf.MobikeUpdateTimer = nil
+			}
+
+			// Mark handover as completed from the IPSec perspective.
+			if n3ueSelf.PendingHandover != nil {
+				n3ueSelf.PendingHandover = nil
+				n3ueSelf.NeedMobilityRegUpdate = false
+			}
+		}
+		return
+	}
 
 	var deletePayload *ike_message.Delete
 	var targetToSourceNotify []byte
