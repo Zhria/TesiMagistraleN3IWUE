@@ -1023,6 +1023,29 @@ func (s *Server) handleInformational(
 
 	// Handle responses to our own INFORMATIONAL requests (DPD, MOBIKE, etc.).
 	if message.IsResponse() {
+		// If the peer replies with INVALID_IKE_SPI, the SA is not available on that peer
+		// (e.g., state-sync failed during handover). Fall back to full IKE re-establishment.
+		for _, ikePayload := range message.Payloads {
+			if ikePayload.Type() != ike_message.TypeN {
+				continue
+			}
+			notification := ikePayload.(*ike_message.Notification)
+			if notification.ProtocolID == ike_message.TypeNone &&
+				notification.NotifyMessageType == ike_message.INVALID_IKE_SPI {
+				ikeLog.Warnf("Peer replied INVALID_IKE_SPI (msgID=%d); triggering IKE re-establishment",
+					message.IKEHeader.MessageID)
+				if ikeSA != nil {
+					ikeSA.PendingMobikeUpdateMsgID = 0
+				}
+				if n3ueSelf.MobikeUpdateTimer != nil {
+					n3ueSelf.MobikeUpdateTimer.Stop()
+					n3ueSelf.MobikeUpdateTimer = nil
+				}
+				s.SendIkeEvt(context.NewStartIkeSaEstablishmentEvt())
+				return
+			}
+		}
+
 		if ikeSA != nil && ikeSA.PendingMobikeUpdateMsgID != 0 && message.IKEHeader.MessageID == ikeSA.PendingMobikeUpdateMsgID {
 			ikeLog.Infof("MOBIKE UPDATE_SA_ADDRESSES acknowledged (msgID=%d)", ikeSA.PendingMobikeUpdateMsgID)
 			ikeSA.PendingMobikeUpdateMsgID = 0
