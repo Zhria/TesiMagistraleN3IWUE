@@ -23,7 +23,7 @@ func InitN3UEContext() {
 	n3ueContext.N3iwfInfo = factory.N3ueConfig.Configuration.N3IWFInfo
 
 	n3ueContext.N3IWFRanUe = new(context.N3IWFRanUe)
-	n3ueContext.N3IWFRanUe.TcpConnStopCh = make(chan struct{})
+	n3ueContext.N3IWFRanUe.TcpConnStopCh = make(chan struct{}, 1)
 
 	n3ueContext.N3IWFUe = new(context.N3IWFIkeUe)
 	n3ueContext.N3IWFUe.N3IWFChildSecurityAssociation = make(map[uint32]*context.ChildSecurityAssociation)
