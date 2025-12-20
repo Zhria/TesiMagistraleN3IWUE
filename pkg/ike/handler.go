@@ -145,9 +145,15 @@ func (s *Server) handleSendMobikeUpdate() {
 			continue
 		}
 
-		var ifid uint32 = n3ueSelf.N3ueInfo.XfrmiId
-		if len(child.XfrmStateList) > 0 && child.XfrmStateList[0].Ifid > 0 {
+		var ifid uint32
+		if child.SelectedIPProtocol == unix.IPPROTO_TCP && n3ueSelf.NwucpXfrmiId != 0 {
+			// CP Child SA must stay pinned to the CP XFRM interface.
+			ifid = n3ueSelf.NwucpXfrmiId
+		} else if len(child.XfrmStateList) > 0 && child.XfrmStateList[0].Ifid > 0 {
 			ifid = uint32(child.XfrmStateList[0].Ifid) // #nosec G115
+		} else {
+			// Fallback to current configured XFRM interface ID (typically the latest allocated ID).
+			ifid = n3ueSelf.N3ueInfo.XfrmiId
 		}
 
 		ueIsInitiator := true

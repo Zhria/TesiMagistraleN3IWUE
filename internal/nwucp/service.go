@@ -102,6 +102,7 @@ func (s *Server) serveConn(errChan chan<- error) {
 					nwucpLog.Warnf("NWUCP: SO_BINDTODEVICE(%q) failed, dialing without it: %v", ifaceName, controlErr)
 					return nil
 				}
+				nwucpLog.Tracef("NWUCP: bound TCP socket to device %q", ifaceName)
 				return nil
 			}
 		}
