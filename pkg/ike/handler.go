@@ -776,6 +776,8 @@ func (s *Server) handleIKEAUTH(
 			ikeLog.Errorf("Setup XFRM interface %s fail: %+v", newXfrmiName, err)
 			return
 		}
+		n3ueSelf.NwucpXfrmiName = newXfrmiName
+		n3ueSelf.NwucpXfrmiId = n3ueSelf.N3ueInfo.XfrmiId
 
 		// Aplly XFRM rules
 		if err = xfrm.ApplyXFRMRule(true, n3ueSelf.N3ueInfo.XfrmiId, childSecurityAssociationContext); err != nil {

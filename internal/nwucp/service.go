@@ -6,9 +6,11 @@ import (
 	"net"
 	"runtime/debug"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/pkg/errors"
+	"golang.org/x/sys/unix"
 
 	"github.com/free5gc/n3iwue/internal/logger"
 	"github.com/free5gc/n3iwue/internal/packet/nasPacket"
@@ -83,6 +85,26 @@ func (s *Server) serveConn(errChan chan<- error) {
 	dialer := &net.Dialer{
 		LocalAddr: localTCPAddr,
 		Timeout:   5 * time.Second,
+	}
+	if ifaceName := n3ueSelf.NwucpXfrmiName; ifaceName != "" {
+		if _, err := net.InterfaceByName(ifaceName); err != nil {
+			nwucpLog.Warnf("NWUCP: xfrmi %q not found, dialing without SO_BINDTODEVICE: %v", ifaceName, err)
+		} else {
+			dialer.Control = func(network, address string, c syscall.RawConn) error {
+				var controlErr error
+				if err := c.Control(func(fd uintptr) {
+					controlErr = unix.SetsockoptString(int(fd), unix.SOL_SOCKET, unix.SO_BINDTODEVICE, ifaceName)
+				}); err != nil {
+					nwucpLog.Warnf("NWUCP: SO_BINDTODEVICE(%q) control failed, dialing without it: %v", ifaceName, err)
+					return nil
+				}
+				if controlErr != nil {
+					nwucpLog.Warnf("NWUCP: SO_BINDTODEVICE(%q) failed, dialing without it: %v", ifaceName, controlErr)
+					return nil
+				}
+				return nil
+			}
+		}
 	}
 	conn, err := dialer.Dial("tcp", n3ueSelf.N3iwfNASAddr.String())
 	if err != nil {

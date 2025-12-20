@@ -67,6 +67,10 @@ type N3UE struct {
 	TemporaryUPIPAddr  net.IP
 	TemporaryQosInfo   *qos.PDUQoSInfo
 
+	// XFRM interface used for NAS over TCP (NWuCP) traffic.
+	NwucpXfrmiName string
+	NwucpXfrmiId   uint32
+
 	// Continuous IKE_SA_INIT timer for reconnection
 	ContinuousIkeSaInitTimer *time.Timer
 

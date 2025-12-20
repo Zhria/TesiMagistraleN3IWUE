@@ -41,18 +41,48 @@ func (s *Server) handleEvent(evt context.NwucpEvt) {
 
 func (s *Server) handleStartNwucpConnEvt() {
 	nwucpLog := logger.NWuCPLog
-	errChan := make(chan error)
 	n3ueSelf := s.Context()
+
+	var oldConn net.Conn
 	if n3ueSelf != nil && n3ueSelf.N3IWFRanUe != nil && n3ueSelf.N3IWFRanUe.TCPConnection != nil {
-		nwucpLog.Infof("Closing existing NWUCP TCP connection before reconnect")
-		util.SafeCloseConn(n3ueSelf.N3IWFRanUe.TCPConnection, nwucpLog, "nwucp_reconnect")
-		n3ueSelf.N3IWFRanUe.TCPConnection = nil
+		oldConn = n3ueSelf.N3IWFRanUe.TCPConnection
 	}
 
-	s.serverWg.Add(1)
-	go s.serveConn(errChan)
-	if err, ok := <-errChan; ok {
-		logger.NWuCPLog.Errorf("NWUCP service startup failed: %+v", err)
+	const maxAttempts = 6
+	backoff := 500 * time.Millisecond
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		errChan := make(chan error)
+
+		s.serverWg.Add(1)
+		go s.serveConn(errChan)
+
+		if err, ok := <-errChan; ok {
+			logger.NWuCPLog.Errorf("NWUCP service startup failed (attempt %d/%d): %+v", attempt, maxAttempts, err)
+			if attempt == maxAttempts {
+				return
+			}
+
+			select {
+			case <-time.After(backoff):
+			case <-s.serverCtx.Done():
+				return
+			}
+
+			if backoff < 5*time.Second {
+				backoff *= 2
+				if backoff > 5*time.Second {
+					backoff = 5 * time.Second
+				}
+			}
+			continue
+		}
+
+		// Connected successfully. Only now close the old connection (if any) to avoid break-before-make.
+		if oldConn != nil && n3ueSelf != nil && n3ueSelf.N3IWFRanUe != nil && n3ueSelf.N3IWFRanUe.TCPConnection != nil &&
+			oldConn != n3ueSelf.N3IWFRanUe.TCPConnection {
+			nwucpLog.Infof("Closing previous NWUCP TCP connection after successful reconnect")
+			util.SafeCloseConn(oldConn, nwucpLog, "nwucp_reconnect_swap")
+		}
 		return
 	}
 }
