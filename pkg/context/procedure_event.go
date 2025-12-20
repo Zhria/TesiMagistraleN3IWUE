@@ -10,6 +10,7 @@ const (
 	DeregistrationComplete
 	RestartRegistration
 	StartHandoverExecution
+	ReconnectNwucp
 )
 
 var procedureEvtTypeStr = []string{
@@ -20,6 +21,7 @@ var procedureEvtTypeStr = []string{
 	DeregistrationComplete: "DeregistrationComplete",
 	RestartRegistration:    "RestartRegistration",
 	StartHandoverExecution: "StartHandoverExecution",
+	ReconnectNwucp:         "ReconnectNwucp",
 }
 
 func (e ProcedureEventType) String() string {
@@ -101,4 +103,14 @@ func (evt *StartHandoverEvt) Type() ProcedureEventType {
 
 func NewStartHandoverEvt() *StartHandoverEvt {
 	return &StartHandoverEvt{}
+}
+
+type ReconnectNwucpEvt struct{}
+
+func (evt *ReconnectNwucpEvt) Type() ProcedureEventType {
+	return ReconnectNwucp
+}
+
+func NewReconnectNwucpEvt() *ReconnectNwucpEvt {
+	return &ReconnectNwucpEvt{}
 }

@@ -18,7 +18,9 @@ func IsConnectionClosed(err error) bool {
 func SafeCloseConn(conn net.Conn, logger *logrus.Entry, context string) {
 	if conn != nil {
 		if err := conn.Close(); err != nil {
-			logger.Errorf("%s: Error closing connection: %+v", context, err)
+			if !IsConnectionClosed(err) {
+				logger.Errorf("%s: Error closing connection: %+v", context, err)
+			}
 		}
 	}
 }

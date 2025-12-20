@@ -1054,16 +1054,12 @@ func (s *Server) handleInformational(
 				n3ueSelf.MobikeUpdateTimer = nil
 			}
 
-			// Force NWuCP (NAS over TCP) to reconnect after MOBIKE update so that the TCP session is re-established
+			// Request NWuCP (NAS over TCP) reconnect after MOBIKE update so that the TCP session is re-established
 			// through the new outer tunnel towards the target N3IWF.
 			if n3ueSelf.PendingHandover != nil && n3ueSelf.PendingHandover.TargetN3iwfInnerIP != nil && n3ueSelf.N3iwfNASAddr != nil {
 				n3ueSelf.N3iwfNASAddr.IP = append(net.IP(nil), n3ueSelf.PendingHandover.TargetN3iwfInnerIP...)
 			}
-			if n3ueSelf.N3IWFRanUe != nil && n3ueSelf.N3IWFRanUe.TCPConnection != nil {
-				ikeLog.Infof("Forcing NWUCP reconnect after MOBIKE update")
-				util.SafeCloseConn(n3ueSelf.N3IWFRanUe.TCPConnection, ikeLog, "mobike_nwucp_reconnect")
-				n3ueSelf.N3IWFRanUe.TCPConnection = nil
-			}
+			s.SendProcedureEvt(context.NewReconnectNwucpEvt())
 
 			// Mark handover as completed from the IPSec perspective.
 			if n3ueSelf.PendingHandover != nil {

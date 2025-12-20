@@ -97,6 +97,9 @@ func (s *Server) handleEvent(evt n3iwue_context.ProcedureEvt) {
 	case *n3iwue_context.NwucpChildSaCreatedEvt:
 		// Establish NWUCP connection with N3IWF
 		s.SendNwucpEvt(n3iwue_context.NewStartNwucpConnEvt())
+	case *n3iwue_context.ReconnectNwucpEvt:
+		AppLog.Info("Reconnecting NWUCP (NAS over TCP)")
+		s.SendNwucpEvt(n3iwue_context.NewStartNwucpConnEvt())
 	case *n3iwue_context.SuccessRegistrationEvt:
 		n3ueSelf := s.Context()
 		if n3ueSelf != nil && n3ueSelf.PendingHandover != nil {

@@ -72,6 +72,47 @@ func (s *Server) serveConn(errChan chan<- error) {
 		s.serverWg.Done()
 	}()
 
+	if n3ueSelf.UEInnerAddr == nil || n3ueSelf.UEInnerAddr.IP == nil || n3ueSelf.N3iwfNASAddr == nil {
+		errChan <- util.LogAndWrapError(errors.New("missing UEInnerAddr/N3iwfNASAddr"), nwucpLog, "NWUCP dial precondition failed")
+		return
+	}
+
+	localTCPAddr := &net.TCPAddr{
+		IP: n3ueSelf.UEInnerAddr.IP,
+	}
+	dialer := &net.Dialer{
+		LocalAddr: localTCPAddr,
+		Timeout:   5 * time.Second,
+	}
+	conn, err := dialer.Dial("tcp", n3ueSelf.N3iwfNASAddr.String())
+	if err != nil {
+		errChan <- util.LogAndWrapError(err, nwucpLog, "TCP dial to N3IWF failed")
+		return
+	}
+
+	tcpConnWithN3IWF, ok := conn.(*net.TCPConn)
+	if !ok {
+		util.SafeCloseConn(conn, nwucpLog, "serveConn")
+		errChan <- util.LogAndWrapError(errors.New("dial returned non-TCP connection"), nwucpLog, "TCP dial to N3IWF failed")
+		return
+	}
+
+	ranUe.TCPConnection = tcpConnWithN3IWF
+	close(errChan)
+
+	nwucpLog.Tracef("Successfully Create CP  %+v", n3ueSelf.N3iwfNASAddr)
+
+	defer func() {
+		util.SafeCloseConn(tcpConnWithN3IWF, nwucpLog, "serveConn")
+		if ranUe.TCPConnection == tcpConnWithN3IWF {
+			ranUe.TCPConnection = nil
+		}
+	}()
+
+	// Mobility Registration Update disabled (handover handled via PathSwitchRequest on the target N3IWF).
+	// s.maybeSendMobilityRegistrationUpdate()
+
+	nasEnv := make([]byte, 65535)
 	for {
 		select {
 		case <-ranUe.TcpConnStopCh:
@@ -81,90 +122,45 @@ func (s *Server) serveConn(errChan chan<- error) {
 			nwucpLog.Infof("NWUCP Connection closed by server context")
 			return
 		default:
+			// Continue reading
 		}
 
-		if n3ueSelf.UEInnerAddr == nil || n3ueSelf.UEInnerAddr.IP == nil || n3ueSelf.N3iwfNASAddr == nil {
-			if errChan != nil {
-				errChan <- util.LogAndWrapError(errors.New("missing UEInnerAddr/N3iwfNASAddr"), nwucpLog, "NWUCP dial precondition failed")
+		if err := tcpConnWithN3IWF.SetReadDeadline(time.Now().Add(time.Second)); err != nil {
+			nwucpLog.Debugf("serveConn: failed to set read deadline: %v", err)
+		}
+
+		n, err := tcpConnWithN3IWF.Read(nasEnv)
+		if err != nil {
+			if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+				continue
 			}
+			nwucpLog.Errorf("Read TCP connection failed: %+v", err)
 			return
 		}
+		nwucpLog.Tracef("Get NAS PDU from UE:\nNAS length: %d\nNAS content:\n%s", n, hex.Dump(nasEnv[:n]))
 
-		localTCPAddr := &net.TCPAddr{IP: n3ueSelf.UEInnerAddr.IP}
-		tcpConnWithN3IWF, err := net.DialTCP("tcp", localTCPAddr, n3ueSelf.N3iwfNASAddr)
+		forwardData := make([]byte, n)
+		copy(forwardData, nasEnv[:n])
+
+		nasMsg, err := s.DecapNasPdu(forwardData)
 		if err != nil {
-			if errChan != nil {
-				errChan <- util.LogAndWrapError(err, nwucpLog, "TCP dial to N3IWF failed")
-				return
-			}
-			nwucpLog.Warnf("NWUCP reconnect dial failed: %+v", err)
-			time.Sleep(500 * time.Millisecond)
+			nwucpLog.Errorf("Decap Nas Pdu Fail: %+v", err)
 			continue
 		}
 
-		ranUe.TCPConnection = tcpConnWithN3IWF
-		if errChan != nil {
-			close(errChan)
-			errChan = nil
+		var evt n3iwue_context.NwucpEvt
+		switch nasMsg.GmmMessage.GetMessageType() {
+		case nas.MsgTypeRegistrationAccept:
+			evt = n3iwue_context.NewHandleRegistrationAcceptEvt(nasMsg)
+		case nas.MsgTypeDLNASTransport:
+			evt = n3iwue_context.NewHandleDLNASTransportEvt(nasMsg)
+		case nas.MsgTypeDeregistrationRequestUETerminatedDeregistration:
+			evt = n3iwue_context.NewHandleDeregistrationReqUeTerminatedEvt(nasMsg)
+		default:
+			nwucpLog.Warnf("Unknown NAS Message Type: %+v", nasMsg.GmmMessage.GetMessageType())
+			continue
 		}
-
-		nwucpLog.Tracef("Successfully Create CP  %+v", n3ueSelf.N3iwfNASAddr)
-
-		nasEnv := make([]byte, 65535)
-		for {
-			select {
-			case <-ranUe.TcpConnStopCh:
-				nwucpLog.Infof("NWUCP Connection closed by TCP connection stop channel")
-				util.SafeCloseConn(tcpConnWithN3IWF, nwucpLog, "serveConn")
-				ranUe.TCPConnection = nil
-				return
-			case <-s.serverCtx.Done():
-				nwucpLog.Infof("NWUCP Connection closed by server context")
-				util.SafeCloseConn(tcpConnWithN3IWF, nwucpLog, "serveConn")
-				ranUe.TCPConnection = nil
-				return
-			default:
-			}
-
-			if err := tcpConnWithN3IWF.SetReadDeadline(time.Now().Add(time.Second)); err != nil {
-				nwucpLog.Debugf("serveConn: failed to set read deadline: %v", err)
-			}
-
-			n, err := tcpConnWithN3IWF.Read(nasEnv)
-			if err != nil {
-				if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
-					continue
-				}
-				nwucpLog.Errorf("Read TCP connection failed: %+v", err)
-				util.SafeCloseConn(tcpConnWithN3IWF, nwucpLog, "serveConn")
-				ranUe.TCPConnection = nil
-				break
-			}
-			nwucpLog.Tracef("Get NAS PDU from UE:\nNAS length: %d\nNAS content:\n%s", n, hex.Dump(nasEnv[:n]))
-
-			forwardData := make([]byte, n)
-			copy(forwardData, nasEnv[:n])
-
-			nasMsg, err := s.DecapNasPdu(forwardData)
-			if err != nil {
-				nwucpLog.Errorf("Decap Nas Pdu Fail: %+v", err)
-				continue
-			}
-
-			var evt n3iwue_context.NwucpEvt
-			switch nasMsg.GmmMessage.GetMessageType() {
-			case nas.MsgTypeRegistrationAccept:
-				evt = n3iwue_context.NewHandleRegistrationAcceptEvt(nasMsg)
-			case nas.MsgTypeDLNASTransport:
-				evt = n3iwue_context.NewHandleDLNASTransportEvt(nasMsg)
-			case nas.MsgTypeDeregistrationRequestUETerminatedDeregistration:
-				evt = n3iwue_context.NewHandleDeregistrationReqUeTerminatedEvt(nasMsg)
-			default:
-				nwucpLog.Warnf("Unknown NAS Message Type: %+v", nasMsg.GmmMessage.GetMessageType())
-				continue
-			}
-			s.SendNwucpEvt(evt)
-		}
+		s.SendNwucpEvt(evt)
 	}
 }
 

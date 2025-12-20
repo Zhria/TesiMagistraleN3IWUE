@@ -12,6 +12,7 @@ import (
 	"github.com/free5gc/n3iwue/internal/gre"
 	"github.com/free5gc/n3iwue/internal/logger"
 	"github.com/free5gc/n3iwue/internal/packet/nasPacket"
+	"github.com/free5gc/n3iwue/internal/util"
 	context "github.com/free5gc/n3iwue/pkg/context"
 	"github.com/free5gc/nas"
 	"github.com/free5gc/nas/nasMessage"
@@ -39,7 +40,14 @@ func (s *Server) handleEvent(evt context.NwucpEvt) {
 }
 
 func (s *Server) handleStartNwucpConnEvt() {
+	nwucpLog := logger.NWuCPLog
 	errChan := make(chan error)
+	n3ueSelf := s.Context()
+	if n3ueSelf != nil && n3ueSelf.N3IWFRanUe != nil && n3ueSelf.N3IWFRanUe.TCPConnection != nil {
+		nwucpLog.Infof("Closing existing NWUCP TCP connection before reconnect")
+		util.SafeCloseConn(n3ueSelf.N3IWFRanUe.TCPConnection, nwucpLog, "nwucp_reconnect")
+		n3ueSelf.N3IWFRanUe.TCPConnection = nil
+	}
 
 	s.serverWg.Add(1)
 	go s.serveConn(errChan)
