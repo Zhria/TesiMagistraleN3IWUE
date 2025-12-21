@@ -298,6 +298,22 @@ func (s *Server) prepareTargetIKESession(ctx *n3iwue_context.HandoverExecutionCo
 		}
 	}
 
+	// If the target indicates NAT traversal, prefer the NAT-T socket for subsequent IKE exchanges (MOBIKE)
+	// and allow ESP-in-UDP to work end-to-end on the new access.
+	if ctx.EnableNATT && n3ueSelf.N3IWFUe != nil {
+		if nattConn := n3ueSelf.IKEConnection[ike.DEFAULT_NATT_PORT]; nattConn != nil && nattConn.Conn != nil {
+			n3ueSelf.N3IWFUe.IKEConnection = nattConn
+			if ikeSA := n3ueSelf.N3IWFUe.N3IWFIKESecurityAssociation; ikeSA != nil {
+				ikeSA.StoreReqRetransUdpConnInfo(nattConn)
+				ikeSA.StoreRspRetransUdpConnInfo(nattConn)
+			}
+			AppLog.Infof("Handover prep: NAT traversal requested, using UDP/%d for IKE/MOBIKE", ike.DEFAULT_NATT_PORT)
+		} else {
+			AppLog.Warnf("Handover prep: NAT traversal requested but UDP/%d socket unavailable; keeping UDP/%d",
+				ike.DEFAULT_NATT_PORT, ike.DEFAULT_IKE_PORT)
+		}
+	}
+
 	if ctx.Command != nil {
 		n3ueSelf.LastHandoverCommand = ctx.Command
 	}

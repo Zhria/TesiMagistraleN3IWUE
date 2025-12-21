@@ -139,6 +139,15 @@ func (s *Server) handleSendMobikeUpdate() {
 		return
 	}
 
+	forceNatt := n3ueSelf.PendingHandover != nil && n3ueSelf.PendingHandover.EnableNATT
+	encapConn := n3ueSelf.N3IWFUe.IKEConnection
+	if forceNatt {
+		if nattConn := n3ueSelf.IKEConnection[DEFAULT_NATT_PORT]; nattConn != nil &&
+			nattConn.UEAddr != nil && nattConn.N3IWFAddr != nil {
+			encapConn = nattConn
+		}
+	}
+
 	// Update XFRM rules for all Child SAs (CP + UP) to use the new outer addresses.
 	for _, child := range n3ueSelf.N3IWFUe.N3IWFChildSecurityAssociation {
 		if child == nil {
@@ -168,11 +177,14 @@ func (s *Server) handleSendMobikeUpdate() {
 
 		child.LocalPublicIPAddr = localIP
 		child.PeerPublicIPAddr = peerIP
-		if child.EnableEncapsulate && n3ueSelf.N3IWFUe.IKEConnection != nil &&
-			n3ueSelf.N3IWFUe.IKEConnection.UEAddr != nil &&
-			n3ueSelf.N3IWFUe.IKEConnection.N3IWFAddr != nil {
-			child.NATPort = n3ueSelf.N3IWFUe.IKEConnection.UEAddr.Port
-			child.N3IWFPort = n3ueSelf.N3IWFUe.IKEConnection.N3IWFAddr.Port
+		if forceNatt && !child.EnableEncapsulate {
+			ikeLog.Infof("MOBIKE: enabling ESP-in-UDP encapsulation (NAT-T) as requested by target for spi=0x%08x",
+				child.InboundSPI)
+			child.EnableEncapsulate = true
+		}
+		if child.EnableEncapsulate && encapConn != nil && encapConn.UEAddr != nil && encapConn.N3IWFAddr != nil {
+			child.NATPort = encapConn.UEAddr.Port
+			child.N3IWFPort = encapConn.N3IWFAddr.Port
 		}
 
 		if err := xfrm.ApplyXFRMRule(ueIsInitiator, ifid, child); err != nil {

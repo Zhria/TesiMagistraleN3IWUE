@@ -428,6 +428,15 @@ func (s *Server) rebindIKEConnections(newIP string) error {
 
 	n3ueCtx := s.Context()
 
+	// Keep using the same active IKE port (500 or 4500) after the rebind.
+	activePort := DEFAULT_IKE_PORT
+	if n3ueCtx != nil && n3ueCtx.N3IWFUe != nil && n3ueCtx.N3IWFUe.IKEConnection != nil && n3ueCtx.N3IWFUe.IKEConnection.UEAddr != nil {
+		switch n3ueCtx.N3IWFUe.IKEConnection.UEAddr.Port {
+		case DEFAULT_IKE_PORT, DEFAULT_NATT_PORT:
+			activePort = n3ueCtx.N3IWFUe.IKEConnection.UEAddr.Port
+		}
+	}
+
 	// Close existing listeners to unblock old receivers
 	for _, udpConn := range n3ueCtx.IKEConnection {
 		if udpConn != nil && udpConn.Conn != nil {
@@ -453,16 +462,7 @@ func (s *Server) rebindIKEConnections(newIP string) error {
 		if err != nil {
 			return fmt.Errorf("resolve new local addr %s: %w", localTarget, err)
 		}
-		activePort := DEFAULT_IKE_PORT
-		if cur := n3ueCtx.N3IWFUe.IKEConnection; cur != nil && cur.UEAddr != nil {
-			activePort = cur.UEAddr.Port
-		}
-		if newConn := n3ueCtx.IKEConnection[activePort]; newConn != nil {
-			n3ueCtx.N3IWFUe.IKEConnection = newConn
-			ikeSA := n3ueCtx.N3IWFUe.N3IWFIKESecurityAssociation
-			ikeSA.StoreReqRetransUdpConnInfo(newConn)
-			ikeSA.StoreRspRetransUdpConnInfo(newConn)
-		}
+
 		errChan := make(chan error)
 		var wg sync.WaitGroup
 		wg.Add(1)
@@ -471,6 +471,19 @@ func (s *Server) rebindIKEConnections(newIP string) error {
 
 		if err, ok := <-errChan; ok {
 			return err
+		}
+	}
+
+	// Update the "active" connection pointer now that the new sockets are in place.
+	if n3ueCtx != nil && n3ueCtx.N3IWFUe != nil {
+		if newConn := n3ueCtx.IKEConnection[activePort]; newConn != nil {
+			n3ueCtx.N3IWFUe.IKEConnection = newConn
+			if ikeSA := n3ueCtx.N3IWFUe.N3IWFIKESecurityAssociation; ikeSA != nil {
+				ikeSA.StoreReqRetransUdpConnInfo(newConn)
+				ikeSA.StoreRspRetransUdpConnInfo(newConn)
+			}
+		} else {
+			ikeLog.Warnf("rebindIKEConnections: active UDP/%d socket not available after rebind", activePort)
 		}
 	}
 
