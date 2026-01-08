@@ -349,7 +349,7 @@ func SetupIPsecXfrmi(
 	if xfrmi, err = netlink.LinkByName(xfrmIfaceName); err != nil {
 		link := &netlink.Xfrmi{
 			LinkAttrs: netlink.LinkAttrs{
-				MTU:         1478,
+				MTU:         1380, //Edit: MTU Reduced due to a PMTU Blackhole. 1478,
 				Name:        xfrmIfaceName,
 				ParentIndex: parent.Attrs().Index,
 			},
