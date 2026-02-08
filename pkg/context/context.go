@@ -7,6 +7,7 @@ import (
 	"math"
 	"math/big"
 	"net"
+	"strings"
 	"time"
 
 	"github.com/pkg/errors"
@@ -508,6 +509,55 @@ func (n3ue *N3UE) CleanupXfrmIf() {
 			if err != nil {
 				appLog.Errorf("cleanupXfrmIf(): Delete XFRM interface error: %+v", err)
 			}
+		}
+	}
+}
+
+// SetGRELinksDown sets all GRE interfaces to DOWN so the kernel queues UL packets
+// in the txqueue instead of sending them over a disconnected Wi-Fi link.
+// Only GRE links are affected; XFRM interfaces stay UP for IKE/MOBIKE signalling.
+func (n3ue *N3UE) SetGRELinksDown() {
+	appLog := logger.AppLog
+	grePrefix := n3ue.N3ueInfo.GreIfaceName
+	if grePrefix == "" {
+		return
+	}
+	for _, iface := range n3ue.CreatedIface {
+		if iface == nil || (*iface).Attrs() == nil {
+			continue
+		}
+		name := (*iface).Attrs().Name
+		if !strings.HasPrefix(name, grePrefix) {
+			continue
+		}
+		if err := netlink.LinkSetDown(*iface); err != nil {
+			appLog.Warnf("SetGRELinksDown: %s failed: %v", name, err)
+		} else {
+			appLog.Infof("SetGRELinksDown: %s DOWN for handover UL buffering", name)
+		}
+	}
+}
+
+// SetGRELinksUp sets all GRE interfaces back to UP, flushing any UL packets
+// that were queued in the kernel txqueue during the handover Wi-Fi gap.
+func (n3ue *N3UE) SetGRELinksUp() {
+	appLog := logger.AppLog
+	grePrefix := n3ue.N3ueInfo.GreIfaceName
+	if grePrefix == "" {
+		return
+	}
+	for _, iface := range n3ue.CreatedIface {
+		if iface == nil || (*iface).Attrs() == nil {
+			continue
+		}
+		name := (*iface).Attrs().Name
+		if !strings.HasPrefix(name, grePrefix) {
+			continue
+		}
+		if err := netlink.LinkSetUp(*iface); err != nil {
+			appLog.Warnf("SetGRELinksUp: %s failed: %v", name, err)
+		} else {
+			appLog.Infof("SetGRELinksUp: %s UP after handover completion", name)
 		}
 	}
 }

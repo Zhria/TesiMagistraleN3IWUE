@@ -207,6 +207,8 @@ func (s *Server) handleSendMobikeUpdate() {
 		// If there is no response, fall back to the existing break-before-make logic.
 		if ikeSA.PendingMobikeUpdateMsgID != 0 {
 			logger.IKELog.Warn("MOBIKE update timed out; falling back to IKE re-establishment")
+			// Restore GRE interfaces so UL traffic is not stuck DOWN.
+			n3ueSelf.SetGRELinksUp()
 			s.SendIkeEvt(context.NewStartIkeSaEstablishmentEvt())
 		}
 	})
@@ -1061,6 +1063,8 @@ func (s *Server) handleInformational(
 					n3ueSelf.MobikeUpdateTimer.Stop()
 					n3ueSelf.MobikeUpdateTimer = nil
 				}
+				// Restore GRE interfaces so UL traffic is not stuck DOWN.
+				n3ueSelf.SetGRELinksUp()
 				s.SendIkeEvt(context.NewStartIkeSaEstablishmentEvt())
 				return
 			}
@@ -1086,6 +1090,10 @@ func (s *Server) handleInformational(
 				n3ueSelf.PendingHandover = nil
 				n3ueSelf.NeedMobilityRegUpdate = false
 			}
+
+			// Set GRE interfaces back UP so queued UL packets are flushed
+			// through the new XFRM path towards the target N3IWF.
+			n3ueSelf.SetGRELinksUp()
 		}
 		return
 	}
@@ -1149,6 +1157,8 @@ func (s *Server) handleInformational(
 		if handoverCtx != nil {
 			if err := s.switchWifiForHandover(handoverCtx); err != nil {
 				ikeLog.Errorf("Wi-Fi switch for handover failed: %+v", err)
+				// Restore GRE interfaces (may have been set DOWN before the failed switch).
+				n3ueSelf.SetGRELinksUp()
 				if n3ueSelf.PendingHandover == handoverCtx {
 					n3ueSelf.PendingHandover = nil
 					n3ueSelf.NeedMobilityRegUpdate = false
@@ -1554,7 +1564,13 @@ func (s *Server) switchWifiForHandover(ctx *context.HandoverExecutionContext) er
 	if ctx.Wifi == nil {
 		return fmt.Errorf("wifi config missing in handover context")
 	}
-	ueIface := s.Context().N3ueInfo.IPSecIfaceName
+
+	// Set GRE interfaces DOWN before the Wi-Fi switch so the kernel queues
+	// UL packets in the txqueue instead of dropping them during the gap.
+	n3ueSelf := s.Context()
+	n3ueSelf.SetGRELinksDown()
+
+	ueIface := n3ueSelf.N3ueInfo.IPSecIfaceName
 	manager := &nmcliWifiManager{}
 	prev, err := manager.Switch(ctx.Wifi)
 	if err != nil {
@@ -1568,7 +1584,6 @@ func (s *Server) switchWifiForHandover(ctx *context.HandoverExecutionContext) er
 	if err := s.rebindIKEConnections(newIP); err != nil {
 		return fmt.Errorf("rebind IKE sockets: %w", err)
 	}
-	n3ueSelf := s.Context()
 	n3ueSelf.N3ueInfo.IPSecIfaceAddr = newIP
 
 	s.captureSourceWifi(prev, ueIface)
@@ -1693,6 +1708,8 @@ func (s *Server) fallbackToSource(ctx *context.HandoverExecutionContext) {
 
 	n3ueSelf.PendingHandover = nil
 	n3ueSelf.NeedMobilityRegUpdate = false
+	// Restore GRE interfaces so UL traffic is not stuck DOWN.
+	n3ueSelf.SetGRELinksUp()
 	s.SendIkeEvt(context.NewStartIkeSaEstablishmentEvt())
 }
 
