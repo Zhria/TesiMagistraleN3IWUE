@@ -112,6 +112,10 @@ func (s *Server) handleEvent(evt n3iwue_context.ProcedureEvt) {
 			return
 		}
 
+		// Wait for AMF to transition from ContextSetup to Registered state
+		// before sending PDU Session Establishment Request (UL NAS Transport)
+		time.Sleep(100 * time.Millisecond)
+
 		// Start PduSession Establishment (initial registration)
 		s.SendNwucpEvt(n3iwue_context.NewStartPduSessionEstablishmentEvt())
 	case *n3iwue_context.DeregistrationCompleteEvt:
