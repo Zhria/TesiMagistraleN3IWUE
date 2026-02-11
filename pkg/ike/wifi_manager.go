@@ -9,11 +9,6 @@ import (
 	n3iwue_context "github.com/free5gc/n3iwue/pkg/context"
 )
 
-// type wifiManager interface {
-// 	// Switch connects to the target Wi-Fi using the UE interface and returns the previously connected SSID (if any).
-// 	Switch(cfg *n3iwue_context.WifiHandoverInfo) (string, error)
-// }
-
 type nmcliWifiManager struct{}
 
 func (m *nmcliWifiManager) Switch(cfg *n3iwue_context.WifiHandoverInfo) (string, error) {
@@ -24,57 +19,47 @@ func (m *nmcliWifiManager) Switch(cfg *n3iwue_context.WifiHandoverInfo) (string,
 		return "", fmt.Errorf("wifi ssid is empty")
 	}
 
-	if present, err := m.hasSSID(cfg.SSID); err != nil {
-		return "", fmt.Errorf("scan wifi: %w", err)
-	} else if !present {
-		return "", fmt.Errorf("ssid %q not found", cfg.SSID)
-	}
-
+	// Get current SSID without triggering a scan (queries active connections only)
 	current, _ := m.currentSSID()
 	if current == cfg.SSID {
 		logger.IKELog.Infof("Wi-Fi already connected to target SSID %q", cfg.SSID)
 		return current, nil
 	}
 
-	args := []string{"dev", "wifi", "connect", cfg.SSID}
-	if cfg.Password != "" {
-		args = append(args, "password", cfg.Password)
-	}
-	if _, err := runNmcli(args...); err != nil {
-		if current != "" && current != cfg.SSID {
-			if _, recErr := runNmcli("dev", "wifi", "connect", current); recErr != nil {
-				logger.IKELog.Warnf("Wi-Fi rollback to %q failed: %v", current, recErr)
-			} else {
-				logger.IKELog.Infof("Wi-Fi rolled back to previous SSID %q after failure", current)
-			}
+	// Fast path: "con up" uses a saved profile — no scan, no DHCP negotiation if static IP
+	logger.IKELog.Infof("Wi-Fi fast connect: trying 'nmcli con up %s'", cfg.SSID)
+	if _, err := runNmcli("con", "up", cfg.SSID); err != nil {
+		// Fallback: full "dev wifi connect" (triggers scan but handles unknown networks)
+		logger.IKELog.Infof("Wi-Fi fast connect failed, falling back to 'dev wifi connect': %v", err)
+		args := []string{"dev", "wifi", "connect", cfg.SSID}
+		if cfg.Password != "" {
+			args = append(args, "password", cfg.Password)
 		}
-		return "", fmt.Errorf("wifi connect ssid %q: %w", cfg.SSID, err)
+		if _, err := runNmcli(args...); err != nil {
+			// Rollback to previous SSID on failure
+			if current != "" && current != cfg.SSID {
+				if _, recErr := runNmcli("con", "up", current); recErr != nil {
+					logger.IKELog.Warnf("Wi-Fi rollback to %q failed: %v", current, recErr)
+				} else {
+					logger.IKELog.Infof("Wi-Fi rolled back to previous SSID %q after failure", current)
+				}
+			}
+			return "", fmt.Errorf("wifi connect ssid %q: %w", cfg.SSID, err)
+		}
 	}
 	return current, nil
 }
 
-func (m *nmcliWifiManager) hasSSID(ssid string) (bool, error) {
-	out, err := runNmcli("-t", "-f", "SSID", "dev", "wifi")
-	if err != nil {
-		return false, err
-	}
-	for _, line := range strings.Split(out, "\n") {
-		if strings.TrimSpace(line) == ssid {
-			return true, nil
-		}
-	}
-	return false, nil
-}
-
+// currentSSID returns the SSID of the active wifi connection without scanning.
 func (m *nmcliWifiManager) currentSSID() (string, error) {
-	out, err := runNmcli("-t", "-f", "ACTIVE,SSID", "dev", "wifi")
+	out, err := runNmcli("-t", "-f", "NAME,TYPE", "con", "show", "--active")
 	if err != nil {
 		return "", err
 	}
 	for _, line := range strings.Split(out, "\n") {
-		parts := strings.SplitN(line, ":", 2)
-		if len(parts) == 2 && parts[0] == "yes" {
-			return parts[1], nil
+		parts := strings.SplitN(strings.TrimSpace(line), ":", 2)
+		if len(parts) == 2 && strings.Contains(parts[1], "wireless") {
+			return parts[0], nil
 		}
 	}
 	return "", nil
