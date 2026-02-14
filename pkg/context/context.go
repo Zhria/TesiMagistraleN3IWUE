@@ -85,6 +85,10 @@ type N3UE struct {
 
 	// MOBIKE handover update timer (fallback to full IKE re-establishment if no reply)
 	MobikeUpdateTimer *time.Timer
+
+	// Handover timing instrumentation (T0 = Target-to-Source notify received)
+	HandoverTimingStart  time.Time
+	HandoverMobikeSentAt time.Time
 }
 
 func N3UESelf() *N3UE {

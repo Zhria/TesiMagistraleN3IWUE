@@ -1,9 +1,11 @@
 package ike
 
 import (
+	"context"
 	"fmt"
 	"os/exec"
 	"strings"
+	"time"
 
 	"github.com/free5gc/n3iwue/internal/logger"
 	n3iwue_context "github.com/free5gc/n3iwue/pkg/context"
@@ -63,6 +65,29 @@ func (m *nmcliWifiManager) currentSSID() (string, error) {
 		}
 	}
 	return "", nil
+}
+
+// StartWifiRescanTicker spawns a background goroutine that periodically runs
+// "nmcli device wifi rescan" to keep NetworkManager's AP list fresh.
+// This prevents the ~4s scan penalty during Wi-Fi handover switches.
+// The goroutine stops when ctx is cancelled.
+func StartWifiRescanTicker(ctx context.Context, interval time.Duration) {
+	go func() {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				logger.IKELog.Infof("Wi-Fi rescan ticker stopped")
+				return
+			case <-ticker.C:
+				if _, err := runNmcli("device", "wifi", "rescan"); err != nil {
+					logger.IKELog.Debugf("wifi rescan tick: %v", err)
+				}
+			}
+		}
+	}()
+	logger.IKELog.Infof("Wi-Fi rescan ticker started (interval=%s)", interval)
 }
 
 func runNmcli(args ...string) (string, error) {

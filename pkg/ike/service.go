@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"sync"
 	"syscall"
+	"time"
 
 	"github.com/google/gopacket"
 	"github.com/google/gopacket/layers"
@@ -95,6 +96,9 @@ func (s *Server) Run(wg *sync.WaitGroup) error {
 	go s.dispatcher(wg)
 
 	ikeLog.Infof("IKE server started with event-driven architecture")
+
+	StartWifiRescanTicker(s.serverCtx, 3*time.Second)
+
 	return nil
 }
 

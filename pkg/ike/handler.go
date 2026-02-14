@@ -214,6 +214,12 @@ func (s *Server) handleSendMobikeUpdate() {
 	ikeLog.Infof("Sending MOBIKE UPDATE_SA_ADDRESSES msgID=%d to %s",
 		ikeSA.PendingMobikeUpdateMsgID, n3ueSelf.N3IWFUe.IKEConnection.N3IWFAddr)
 	s.SendN3iwfInformationExchange(n3ueSelf, &payload, true, false, ikeSA.InitiatorMessageID)
+
+	// T3: MOBIKE sent
+	if !n3ueSelf.HandoverTimingStart.IsZero() {
+		n3ueSelf.HandoverMobikeSentAt = time.Now()
+		ikeLog.Infof("HANDOVER_TIMING: phase=mobike_sent elapsed=%s", time.Since(n3ueSelf.HandoverTimingStart))
+	}
 }
 
 // stopContinuousIkeSaInit stops the continuous IKE_SA_INIT timer
@@ -1068,6 +1074,17 @@ func (s *Server) handleInformational(
 
 		if ikeSA != nil && ikeSA.PendingMobikeUpdateMsgID != 0 && message.IKEHeader.MessageID == ikeSA.PendingMobikeUpdateMsgID {
 			ikeLog.Infof("MOBIKE UPDATE_SA_ADDRESSES acknowledged (msgID=%d)", ikeSA.PendingMobikeUpdateMsgID)
+
+			// T4: MOBIKE acknowledged
+			if !n3ueSelf.HandoverTimingStart.IsZero() {
+				elapsed := time.Since(n3ueSelf.HandoverTimingStart)
+				var delta time.Duration
+				if !n3ueSelf.HandoverMobikeSentAt.IsZero() {
+					delta = time.Since(n3ueSelf.HandoverMobikeSentAt)
+				}
+				ikeLog.Infof("HANDOVER_TIMING: phase=mobike_ack elapsed=%s delta=%s", elapsed, delta)
+			}
+
 			ikeSA.PendingMobikeUpdateMsgID = 0
 			if n3ueSelf.MobikeUpdateTimer != nil {
 				n3ueSelf.MobikeUpdateTimer.Stop()
@@ -1167,6 +1184,11 @@ func (s *Server) handleTargetToSourceNotify(
 
 	ikeLog.Infof("Received target-to-source notify (len=%d bytes)", len(data))
 
+	// T0: Handover timing start
+	n3ueSelf := s.Context()
+	n3ueSelf.HandoverTimingStart = time.Now()
+	ikeLog.Infof("HANDOVER_TIMING: phase=t2s_notify_received t0=%s", n3ueSelf.HandoverTimingStart.Format(time.RFC3339Nano))
+
 	container, err := parseTargetToSourceContainer(data)
 	if err != nil {
 		return s.buildHandoverFailurePayload("parse_error", err.Error()), nil, err
@@ -1185,7 +1207,6 @@ func (s *Server) handleTargetToSourceNotify(
 			i, t.PDUSessionID, t.TargetIP, t.TargetTEID, t.UPFIP, t.GTPBindIP, t.QFIs)
 	}
 
-	n3ueSelf := s.Context()
 	execCtx.SourceN3iwfIP = cloneIP(net.ParseIP(n3ueSelf.N3iwfInfo.IPSecIfaceAddr))
 	execCtx.SourceN3iwfInnerIP = cloneIP(n3ueSelf.TemporaryUPIPAddr)
 	if execCtx.SourceN3iwfInnerIP == nil {
@@ -1554,11 +1575,23 @@ func (s *Server) switchWifiForHandover(ctx *context.HandoverExecutionContext) er
 	if ctx.Wifi == nil {
 		return fmt.Errorf("wifi config missing in handover context")
 	}
-	ueIface := s.Context().N3ueInfo.IPSecIfaceName
+	n3ueSelf := s.Context()
+	ueIface := n3ueSelf.N3ueInfo.IPSecIfaceName
+
+	// T1: Wi-Fi switch start
+	if !n3ueSelf.HandoverTimingStart.IsZero() {
+		logger.IKELog.Infof("HANDOVER_TIMING: phase=wifi_switch_start elapsed=%s", time.Since(n3ueSelf.HandoverTimingStart))
+	}
+
 	manager := &nmcliWifiManager{}
 	prev, err := manager.Switch(ctx.Wifi)
 	if err != nil {
 		return err
+	}
+
+	// T2: Wi-Fi switch done
+	if !n3ueSelf.HandoverTimingStart.IsZero() {
+		logger.IKELog.Infof("HANDOVER_TIMING: phase=wifi_switch_done elapsed=%s", time.Since(n3ueSelf.HandoverTimingStart))
 	}
 
 	newIP, err := currentIPv4Addr(ueIface)
@@ -1568,7 +1601,6 @@ func (s *Server) switchWifiForHandover(ctx *context.HandoverExecutionContext) er
 	if err := s.rebindIKEConnections(newIP); err != nil {
 		return fmt.Errorf("rebind IKE sockets: %w", err)
 	}
-	n3ueSelf := s.Context()
 	n3ueSelf.N3ueInfo.IPSecIfaceAddr = newIP
 
 	s.captureSourceWifi(prev, ueIface)

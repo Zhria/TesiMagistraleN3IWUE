@@ -99,11 +99,24 @@ func (s *Server) handleEvent(evt n3iwue_context.ProcedureEvt) {
 		s.SendNwucpEvt(n3iwue_context.NewStartNwucpConnEvt())
 	case *n3iwue_context.ReconnectNwucpEvt:
 		AppLog.Info("Reconnecting NWUCP (NAS over TCP)")
+		// T5: NWuCP reconnect
+		n3ueCtx := s.Context()
+		if n3ueCtx != nil && !n3ueCtx.HandoverTimingStart.IsZero() {
+			AppLog.Infof("HANDOVER_TIMING: phase=nwucp_reconnect elapsed=%s", time.Since(n3ueCtx.HandoverTimingStart))
+		}
 		s.SendNwucpEvt(n3iwue_context.NewStartNwucpConnEvt())
 	case *n3iwue_context.SuccessRegistrationEvt:
 		n3ueSelf := s.Context()
 		if n3ueSelf != nil && n3ueSelf.PendingHandover != nil {
 			AppLog.Info("Mobility registration update completed after handover; skipping PDU Session establishment")
+			// T6: Handover complete
+			if !n3ueSelf.HandoverTimingStart.IsZero() {
+				total := time.Since(n3ueSelf.HandoverTimingStart)
+				AppLog.Infof("HANDOVER_TIMING: phase=handover_complete elapsed=%s total=%s", total, total)
+				// Reset timing fields
+				n3ueSelf.HandoverTimingStart = time.Time{}
+				n3ueSelf.HandoverMobikeSentAt = time.Time{}
+			}
 			n3ueSelf.PendingHandover = nil
 			n3ueSelf.NeedMobilityRegUpdate = false
 			n3ueSelf.NasNh = nil
