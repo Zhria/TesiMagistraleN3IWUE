@@ -1189,6 +1189,12 @@ func (s *Server) handleTargetToSourceNotify(
 	n3ueSelf.HandoverTimingStart = time.Now()
 	ikeLog.Infof("HANDOVER_TIMING: phase=t2s_notify_received t0=%s", n3ueSelf.HandoverTimingStart.Format(time.RFC3339Nano))
 
+	// Trigger an on-demand Wi-Fi rescan so NetworkManager's AP cache is fresh
+	// by the time switchWifiForHandover calls "nmcli con up".
+	if _, err := runNmcli("device", "wifi", "rescan"); err != nil {
+		ikeLog.Debugf("on-demand wifi rescan at T2S notify: %v", err)
+	}
+
 	container, err := parseTargetToSourceContainer(data)
 	if err != nil {
 		return s.buildHandoverFailurePayload("parse_error", err.Error()), nil, err
@@ -1577,6 +1583,10 @@ func (s *Server) switchWifiForHandover(ctx *context.HandoverExecutionContext) er
 	}
 	n3ueSelf := s.Context()
 	ueIface := n3ueSelf.N3ueInfo.IPSecIfaceName
+
+	// Brief wait for the on-demand rescan (triggered in handleTargetToSourceNotify)
+	// to populate NetworkManager's AP cache before switching.
+	time.Sleep(300 * time.Millisecond)
 
 	// T1: Wi-Fi switch start
 	if !n3ueSelf.HandoverTimingStart.IsZero() {
