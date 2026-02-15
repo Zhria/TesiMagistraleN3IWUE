@@ -97,7 +97,7 @@ func (s *Server) Run(wg *sync.WaitGroup) error {
 
 	ikeLog.Infof("IKE server started with event-driven architecture")
 
-	StartWifiRescanTicker(s.serverCtx, 3*time.Second)
+	StartWifiRescanTicker(s.serverCtx, 10*time.Second)
 
 	return nil
 }
