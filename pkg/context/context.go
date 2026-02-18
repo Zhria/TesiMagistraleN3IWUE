@@ -67,6 +67,9 @@ type N3UE struct {
 	TemporaryUPIPAddr  net.IP
 	TemporaryQosInfo   *qos.PDUQoSInfo
 
+	// Saved QFI->destination from first PDU session, re-used for GRE routes after handover
+	SavedPDURoutes map[uint8]net.IPNet
+
 	// XFRM interface used for NAS over TCP (NWuCP) traffic.
 	NwucpXfrmiName string
 	NwucpXfrmiId   uint32

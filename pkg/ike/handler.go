@@ -20,6 +20,9 @@ import (
 	"github.com/free5gc/ike/security/encr"
 	"github.com/free5gc/ike/security/integ"
 	"github.com/free5gc/ike/security/prf"
+	"github.com/vishvananda/netlink"
+
+	"github.com/free5gc/n3iwue/internal/gre"
 	"github.com/free5gc/n3iwue/internal/logger"
 	"github.com/free5gc/n3iwue/internal/packet/nasPacket"
 	"github.com/free5gc/n3iwue/internal/packet/ngapPacket"
@@ -1035,7 +1038,39 @@ func (s *Server) handleCREATECHILDSA(
 	ikeLog.Infof("Setup XFRM interface %s successfully", n3ueSelf.TemporaryXfrmiName)
 
 	if n3ueSelf.MobikeRejected {
-		ikeLog.Infof("Handover CREATE_CHILD_SA completed; signalling PDU session established")
+		ikeLog.Infof("Handover CREATE_CHILD_SA completed; creating GRE tunnels")
+
+		pduAddr := net.ParseIP(n3ueSelf.N3ueInfo.DnIPAddr)
+		if pduAddr != nil && n3ueSelf.TemporaryUPIPAddr != nil && n3ueSelf.UEInnerAddr != nil {
+			greBase := fmt.Sprintf("%s-id-%d", n3ueSelf.N3ueInfo.GreIfaceName, n3ueSelf.N3ueInfo.XfrmiId)
+			linkGREs, grErr := gre.SetupGreTunnels(greBase, n3ueSelf.TemporaryXfrmiName,
+				n3ueSelf.UEInnerAddr.IP, n3ueSelf.TemporaryUPIPAddr, pduAddr, n3ueSelf.TemporaryQosInfo)
+			if grErr != nil {
+				ikeLog.Errorf("Handover GRE setup: %v", grErr)
+			} else {
+				for qfi, link := range linkGREs {
+					if dst, ok := n3ueSelf.SavedPDURoutes[qfi]; ok {
+						priority := 1
+						if qfi == 1 {
+							priority = 7
+						}
+						if err := netlink.RouteAdd(&netlink.Route{
+							LinkIndex: (*link).Attrs().Index,
+							Dst:       &net.IPNet{IP: append(net.IP(nil), dst.IP...), Mask: dst.Mask},
+							Priority:  priority,
+						}); err != nil {
+							ikeLog.Warnf("Handover route QFI %d: %v", qfi, err)
+						} else {
+							ikeLog.Infof("Handover route added: QFI %d -> %s via %s", qfi, dst.String(), (*link).Attrs().Name)
+						}
+					}
+				}
+			}
+		} else {
+			ikeLog.Warnf("Cannot create handover GRE: pduAddr=%v upIP=%v innerAddr=%v",
+				pduAddr, n3ueSelf.TemporaryUPIPAddr, n3ueSelf.UEInnerAddr)
+		}
+
 		n3ueSelf.MobikeRejected = false
 		s.SendProcedureEvt(context.NewPduSessionEstablishedEvt())
 	}
@@ -1074,11 +1109,12 @@ func (s *Server) handleInformational(
 					n3ueSelf.MobikeUpdateTimer.Stop()
 					n3ueSelf.MobikeUpdateTimer = nil
 				}
-				if err := s.CleanChildSAXfrm(); err != nil {
-					ikeLog.Warnf("MOBIKE rejected: CleanChildSAXfrm: %v", err)
+			if err := s.CleanChildSAXfrm(); err != nil {
+				ikeLog.Warnf("MOBIKE rejected: CleanChildSAXfrm: %v", err)
 				}
 				n3ueSelf.CleanupXfrmIf()
 				n3ueSelf.CreatedIface = nil
+				n3ueSelf.N3ueInfo.XfrmiId = factory.N3ueConfig.Configuration.N3UEInfo.XfrmiId
 				s.SendIkeEvt(context.NewStartIkeSaEstablishmentEvt())
 				return
 			}

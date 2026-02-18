@@ -162,7 +162,8 @@ func (s *Server) handleDLNASTransport(evt *context.HandleDLNASTransportEvt) {
 			return
 		}
 
-		// Add route
+		// Add route and save QFI->destination for handover re-use
+		n3ueSelf.SavedPDURoutes = make(map[uint8]net.IPNet)
 		for qfi, link := range linkGREs {
 			tunnel := *link
 			priority := 1 // lower is higher (1 ~ 7)
@@ -176,6 +177,11 @@ func (s *Server) handleDLNASTransport(evt *context.HandleDLNASTransportEvt) {
 			} else if remoteAddress, ok = qfiToTargetMap[qfi]; !ok {
 				nwucpLog.Errorf("not found target address for QFI [%v] from NAS", qfi)
 				continue
+			}
+
+			n3ueSelf.SavedPDURoutes[qfi] = net.IPNet{
+				IP:   append(net.IP(nil), remoteAddress.Address...),
+				Mask: remoteAddress.Mask,
 			}
 
 			nwucpLog.Infof("Add route: QFI[%+v] remote address[%+v]", qfi, remoteAddress)
