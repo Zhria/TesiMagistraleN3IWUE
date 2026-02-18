@@ -1068,6 +1068,11 @@ func (s *Server) handleInformational(
 					n3ueSelf.MobikeUpdateTimer.Stop()
 					n3ueSelf.MobikeUpdateTimer = nil
 				}
+				if err := s.CleanChildSAXfrm(); err != nil {
+					ikeLog.Warnf("MOBIKE rejected: CleanChildSAXfrm: %v", err)
+				}
+				n3ueSelf.CleanupXfrmIf()
+				n3ueSelf.CreatedIface = nil
 				s.SendIkeEvt(context.NewStartIkeSaEstablishmentEvt())
 				return
 			}
