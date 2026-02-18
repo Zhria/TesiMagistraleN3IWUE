@@ -125,12 +125,14 @@ func (s *Server) handleEvent(evt n3iwue_context.ProcedureEvt) {
 		}
 
 		if n3ueSelf != nil && n3ueSelf.MobikeRejected {
-			AppLog.Info("MOBIKE was rejected (no state-sync on target); proceeding with PDU Session Establishment")
+			AppLog.Info("MOBIKE was rejected (no state-sync on target); waiting for N3IWF CREATE_CHILD_SA")
 			n3ueSelf.PendingHandover = nil
 			n3ueSelf.NeedMobilityRegUpdate = false
-			n3ueSelf.MobikeRejected = false
 			n3ueSelf.NasNh = nil
 			n3ueSelf.NasNcc = 0
+			// MobikeRejected stays true so the IKE handler knows to fire
+			// PduSessionEstablishedEvt when CREATE_CHILD_SA arrives.
+			return
 		}
 
 		// Wait for AMF to transition from ContextSetup to Registered state

@@ -1033,6 +1033,12 @@ func (s *Server) handleCREATECHILDSA(
 		ikeLog.Errorf("Setup XFRMi interface %s fail: %+v", n3ueSelf.TemporaryXfrmiName, err)
 	}
 	ikeLog.Infof("Setup XFRM interface %s successfully", n3ueSelf.TemporaryXfrmiName)
+
+	if n3ueSelf.MobikeRejected {
+		ikeLog.Infof("Handover CREATE_CHILD_SA completed; signalling PDU session established")
+		n3ueSelf.MobikeRejected = false
+		s.SendProcedureEvt(context.NewPduSessionEstablishedEvt())
+	}
 }
 
 func (s *Server) handleInformational(
