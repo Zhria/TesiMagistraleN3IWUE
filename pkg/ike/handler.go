@@ -1058,8 +1058,9 @@ func (s *Server) handleInformational(
 			notification := ikePayload.(*ike_message.Notification)
 			if notification.ProtocolID == ike_message.TypeNone &&
 				notification.NotifyMessageType == ike_message.INVALID_IKE_SPI {
-				ikeLog.Warnf("Peer replied INVALID_IKE_SPI (msgID=%d); triggering IKE re-establishment",
-					message.IKEHeader.MessageID)
+			ikeLog.Warnf("Peer replied INVALID_IKE_SPI (msgID=%d); triggering IKE re-establishment",
+				message.IKEHeader.MessageID)
+				n3ueSelf.MobikeRejected = true
 				if ikeSA != nil {
 					ikeSA.PendingMobikeUpdateMsgID = 0
 				}
@@ -1191,8 +1192,10 @@ func (s *Server) handleTargetToSourceNotify(
 
 	// Trigger an on-demand Wi-Fi rescan so NetworkManager's AP cache is fresh
 	// by the time switchWifiForHandover calls "nmcli con up".
-	if _, err := runNmcli("device", "wifi", "rescan"); err != nil {
-		ikeLog.Debugf("on-demand wifi rescan at T2S notify: %v", err)
+	if factory.N3ueInfo.EnableWifiPrescan == nil || *factory.N3ueInfo.EnableWifiPrescan {
+		if _, err := runNmcli("device", "wifi", "rescan"); err != nil {
+			ikeLog.Debugf("on-demand wifi rescan at T2S notify: %v", err)
+		}
 	}
 
 	container, err := parseTargetToSourceContainer(data)
@@ -1221,6 +1224,7 @@ func (s *Server) handleTargetToSourceNotify(
 	n3ueSelf.SourceIKEEndpoints = snapshotIKEEndpoints(n3ueSelf)
 	n3ueSelf.PendingHandover = execCtx
 	n3ueSelf.NeedMobilityRegUpdate = true
+	n3ueSelf.MobikeRejected = false
 	s.applyNasHandoverContext(execCtx.Nas)
 
 	// Refresh DPD timestamp and timer right before handover to avoid stale dead-peer checks
@@ -1586,7 +1590,9 @@ func (s *Server) switchWifiForHandover(ctx *context.HandoverExecutionContext) er
 
 	// Brief wait for the on-demand rescan (triggered in handleTargetToSourceNotify)
 	// to populate NetworkManager's AP cache before switching.
-	time.Sleep(300 * time.Millisecond)
+	if factory.N3ueInfo.EnableWifiPrescan == nil || *factory.N3ueInfo.EnableWifiPrescan {
+		time.Sleep(300 * time.Millisecond)
+	}
 
 	// T1: Wi-Fi switch start
 	if !n3ueSelf.HandoverTimingStart.IsZero() {

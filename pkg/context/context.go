@@ -86,6 +86,11 @@ type N3UE struct {
 	// MOBIKE handover update timer (fallback to full IKE re-establishment if no reply)
 	MobikeUpdateTimer *time.Timer
 
+	// Set when the target N3IWF replies INVALID_IKE_SPI to a MOBIKE update,
+	// indicating that no IPSec state was transferred (state-sync disabled).
+	// The UE must proceed with PDU Session Establishment after registration.
+	MobikeRejected bool
+
 	// Handover timing instrumentation (T0 = Target-to-Source notify received)
 	HandoverTimingStart  time.Time
 	HandoverMobikeSentAt time.Time

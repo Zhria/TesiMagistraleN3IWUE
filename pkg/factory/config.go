@@ -137,6 +137,7 @@ type N3UEInfo struct {
 	IkeRetransmit      *ExponentialTimerValue `yaml:"IkeRetransmit" valid:"required"`
 	AutoReRegistration bool                   `yaml:"AutoReRegistration" valid:"optional"`
 	HandoverFallback   time.Duration          `yaml:"HandoverFallbackTimeout" valid:"optional"`
+	EnableWifiPrescan  *bool                  `yaml:"enableWifiPrescan" valid:"optional"` // default: true
 }
 
 func (i *N3UEInfo) validate() (bool, error) {

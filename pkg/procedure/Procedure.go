@@ -107,13 +107,12 @@ func (s *Server) handleEvent(evt n3iwue_context.ProcedureEvt) {
 		s.SendNwucpEvt(n3iwue_context.NewStartNwucpConnEvt())
 	case *n3iwue_context.SuccessRegistrationEvt:
 		n3ueSelf := s.Context()
-		if n3ueSelf != nil && n3ueSelf.PendingHandover != nil {
+		if n3ueSelf != nil && n3ueSelf.PendingHandover != nil && !n3ueSelf.MobikeRejected {
 			AppLog.Info("Mobility registration update completed after handover; skipping PDU Session establishment")
 			// T6: Handover complete
 			if !n3ueSelf.HandoverTimingStart.IsZero() {
 				total := time.Since(n3ueSelf.HandoverTimingStart)
 				AppLog.Infof("HANDOVER_TIMING: phase=handover_complete elapsed=%s total=%s", total, total)
-				// Reset timing fields
 				n3ueSelf.HandoverTimingStart = time.Time{}
 				n3ueSelf.HandoverMobikeSentAt = time.Time{}
 			}
@@ -125,11 +124,20 @@ func (s *Server) handleEvent(evt n3iwue_context.ProcedureEvt) {
 			return
 		}
 
+		if n3ueSelf != nil && n3ueSelf.MobikeRejected {
+			AppLog.Info("MOBIKE was rejected (no state-sync on target); proceeding with PDU Session Establishment")
+			n3ueSelf.PendingHandover = nil
+			n3ueSelf.NeedMobilityRegUpdate = false
+			n3ueSelf.MobikeRejected = false
+			n3ueSelf.NasNh = nil
+			n3ueSelf.NasNcc = 0
+		}
+
 		// Wait for AMF to transition from ContextSetup to Registered state
 		// before sending PDU Session Establishment Request (UL NAS Transport)
 		time.Sleep(100 * time.Millisecond)
 
-		// Start PduSession Establishment (initial registration)
+		// Start PduSession Establishment
 		s.SendNwucpEvt(n3iwue_context.NewStartPduSessionEstablishmentEvt())
 	case *n3iwue_context.DeregistrationCompleteEvt:
 		s.handleDeregistrationCompleteEvt()
