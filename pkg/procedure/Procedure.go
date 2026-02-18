@@ -147,21 +147,22 @@ func (s *Server) handleEvent(evt n3iwue_context.ProcedureEvt) {
 		// Test Connectivity
 		AppLog.Info("PduSession Created")
 		n3ueSelf := s.Context()
-
-		if err := s.TestConnectivity("9.9.9.9"); err != nil {
-			AppLog.Errorf("ping fail : %+v", err)
-		}
-		if err := s.TestConnectivity("1.1.1.1"); err != nil {
-			AppLog.Errorf("ping fail : %+v", err)
-		}
-		if err := s.TestConnectivity("8.8.8.8"); err != nil {
-			AppLog.Errorf("ping fail : %+v", err)
-		} else {
-			AppLog.Infof("ULCount=%x, DLCount=%x",
-				n3ueSelf.RanUeContext.ULCount.Get(),
-				n3ueSelf.RanUeContext.DLCount.Get())
-			AppLog.Info("Keep connection with N3IWF until receive SIGINT or SIGTERM")
-		}
+		go func() {
+			if err := s.TestConnectivity("9.9.9.9"); err != nil {
+				AppLog.Errorf("ping fail : %+v", err)
+			}
+			if err := s.TestConnectivity("1.1.1.1"); err != nil {
+				AppLog.Errorf("ping fail : %+v", err)
+			}
+			if err := s.TestConnectivity("8.8.8.8"); err != nil {
+				AppLog.Errorf("ping fail : %+v", err)
+			} else {
+				AppLog.Infof("ULCount=%x, DLCount=%x",
+					n3ueSelf.RanUeContext.ULCount.Get(),
+					n3ueSelf.RanUeContext.DLCount.Get())
+				AppLog.Info("Keep connection with N3IWF until receive SIGINT or SIGTERM")
+			}
+		}()
 	case *n3iwue_context.StartHandoverEvt:
 		s.handleStartHandoverEvt()
 	default:
